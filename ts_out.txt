@@ -1,0 +1,12 @@
+app/(tabs)/shield.tsx(45,30): error TS2339: Property 'EncodingType' does not exist on type 'typeof import("C:/Users/kishal/Desktop/threat_lens/node_modules/expo-file-system/build/index")'.
+app/(tabs)/shield.tsx(55,37): error TS2339: Property 'cacheDirectory' does not exist on type 'typeof import("C:/Users/kishal/Desktop/threat_lens/node_modules/expo-file-system/build/index")'.
+app/(tabs)/shield.tsx(56,95): error TS2339: Property 'EncodingType' does not exist on type 'typeof import("C:/Users/kishal/Desktop/threat_lens/node_modules/expo-file-system/build/index")'.
+src/services/geminiService.ts(3,36): error TS2307: Cannot find module '@google/generative-ai' or its corresponding type declarations.
+src/services/notificationService.ts(5,35): error TS2322: Type 'Promise<{ shouldShowAlert: true; shouldPlaySound: true; shouldSetBadge: true; }>' is not assignable to type 'Promise<NotificationBehavior>'.
+  Type '{ shouldShowAlert: true; shouldPlaySound: true; shouldSetBadge: true; }' is missing the following properties from type 'NotificationBehavior': shouldShowBanner, shouldShowList
+src/services/notificationService.ts(29,7): error TS2322: Type 'object | undefined' is not assignable to type 'Record<string, unknown> | undefined'.
+  Type 'object' is not assignable to type 'Record<string, unknown>'.
+    Index signature for type 'string' is missing in type '{}'.
+src/utils/lsbWatermark.ts(17,26): error TS2339: Property 'EncodingType' does not exist on type 'typeof import("C:/Users/kishal/Desktop/threat_lens/node_modules/expo-file-system/build/index")'.
+src/utils/lsbWatermark.ts(33,33): error TS2339: Property 'cacheDirectory' does not exist on type 'typeof import("C:/Users/kishal/Desktop/threat_lens/node_modules/expo-file-system/build/index")'.
+src/utils/lsbWatermark.ts(35,26): error TS2339: Property 'EncodingType' does not exist on type 'typeof import("C:/Users/kishal/Desktop/threat_lens/node_modules/expo-file-system/build/index")'.

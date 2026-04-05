@@ -1,163 +1,102 @@
-import { useEffect, useRef, useState } from "react";
-import type { ReactElement } from "react";
-import {
-  FlatList,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
-
-import ClassificationCard from "../../src/components/ClassificationCard";
-import RedFlagHighlighter from "../../src/components/RedFlagHighlighter";
-import { THEME } from "../../src/constants/theme";
+import React, { useState } from "react";
+import { StyleSheet, View, Text, TextInput, Pressable, ScrollView, ActivityIndicator } from "react-native";
+import { useRouter } from "expo-router";
+import Feather from "@expo/vector-icons/Feather";
 import { useScannerStore } from "../../src/stores/scannerStore";
-import type { ScanResult } from "../../src/types";
-
-const MAX_INPUT_LENGTH = 1500;
-
-const CLASSIFICATION_COLORS: Record<ScanResult["classification"], string> = {
-  SAFE: "#4ADE80",
-  SPAM: "#FBBF24",
-  SCAM: "#F97316",
-  PHISHING: "#F87171",
-};
 
 export default function ScannerScreen() {
-  const inputText = useScannerStore((state) => state.inputText);
-  const isScanning = useScannerStore((state) => state.isScanning);
-  const currentResult = useScannerStore((state) => state.currentResult);
-  const scanHistory = useScannerStore((state) => state.scanHistory);
-  const setInputText = useScannerStore((state) => state.actions.setInputText);
-  const startScan = useScannerStore((state) => state.actions.startScan);
-  const loadHistory = useScannerStore((state) => state.actions.loadHistory);
+  const router = useRouter();
+  const scannerStore = useScannerStore();
+  const [textToScan, setTextToScan] = useState("");
 
-  const [progress, setProgress] = useState<number>(0);
-  const wasScanningRef = useRef<boolean>(false);
-
-  useEffect(() => {
-    void loadHistory();
-  }, [loadHistory]);
-
-  useEffect(() => {
-    let intervalId: ReturnType<typeof setInterval> | null = null;
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-    if (isScanning) {
-      wasScanningRef.current = true;
-      setProgress(8);
-      intervalId = setInterval(() => {
-        setProgress((previous) => Math.min(previous + 6, 92));
-      }, 180);
-    } else if (wasScanningRef.current) {
-      setProgress(100);
-      timeoutId = setTimeout(() => {
-        setProgress(0);
-        wasScanningRef.current = false;
-      }, 300);
-    } else {
-      setProgress(0);
-    }
-
-    return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    };
-  }, [isScanning]);
-
-  const canAnalyse = inputText.trim().length >= 10 && !isScanning;
-
-  const handleScanPress = (): void => {
-    if (!canAnalyse) {
-      return;
-    }
-
-    void startScan();
+  const handleScan = async () => {
+    if (textToScan.trim().length === 0) return;
+    
+    await scannerStore.scanManualText(textToScan.trim());
+    setTextToScan("");
+    
+    // Once scan is done, the history[0] contains the result
+    router.push("/scan/result");
   };
 
-  const renderHistoryItem = ({ item }: { item: ScanResult }): ReactElement => {
-    const color = CLASSIFICATION_COLORS[item.classification];
-
-    return (
-      <View style={styles.historyCard}>
-        <View style={styles.historyHeader}>
-          <Text style={styles.timestampText}>
-            {new Date(item.timestamp).toLocaleString()}
-          </Text>
-          <View style={[styles.classificationBadge, { borderColor: color }]}> 
-            <Text style={[styles.classificationBadgeText, { color }]}>
-              {item.classification}
-            </Text>
-          </View>
-        </View>
-        <RedFlagHighlighter text={item.messagePreview} flags={item.redFlags} />
-      </View>
-    );
+  const getStatusColor = (classification: string) => {
+    switch (classification) {
+      case "SAFE": return "#4ADE80";
+      case "SPAM": return "#FBBF24";
+      case "SCAM": return "#F87171";
+      case "PHISHING": return "#F87171";
+      default: return "#8B8F99";
+    }
   };
 
-  const listHeader = (
-    <View style={styles.headerBlock}>
-      <Text style={styles.title}>Message Scanner</Text>
-      <Text style={styles.subtitle}>Paste suspicious SMS, email, or chat text.</Text>
-
-      <View style={styles.inputWrap}>
-        <TextInput
-          multiline
-          maxLength={MAX_INPUT_LENGTH}
-          value={inputText}
-          onChangeText={setInputText}
-          placeholder="Paste a suspicious message here..."
-          placeholderTextColor={THEME.colors.textSecondary}
-          style={styles.input}
-          textAlignVertical="top"
-        />
-      </View>
-
-      <Text style={styles.counterText}>{`${inputText.length}/${MAX_INPUT_LENGTH}`}</Text>
-
-      <TouchableOpacity
-        activeOpacity={0.85}
-        style={[styles.button, !canAnalyse && styles.buttonDisabled]}
-        disabled={!canAnalyse}
-        onPress={handleScanPress}
-      >
-        <Text style={styles.buttonText}>
-          {isScanning ? "Analysing..." : "Analyse Message"}
-        </Text>
-      </TouchableOpacity>
-
-      {progress > 0 ? (
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${progress}%` }]} />
-        </View>
-      ) : null}
-
-      {currentResult ? <ClassificationCard result={currentResult} /> : null}
-
-      {currentResult?.explanation === "Configure Backend URL in Settings" ? (
-        <Text style={styles.apiKeyHint}>Configure Backend URL in Settings</Text>
-      ) : null}
-
-      <Text style={styles.historyTitle}>Recent Scans</Text>
-    </View>
-  );
+  const getStatusIcon = (classification: string) => {
+    switch (classification) {
+      case "SAFE": return "shield";
+      case "SPAM": return "info";
+      case "SCAM": return "alert-triangle";
+      case "PHISHING": return "alert-octagon";
+      default: return "help-circle";
+    }
+  };
 
   return (
     <View style={styles.container}>
-      <FlatList
-        data={scanHistory}
-        keyExtractor={(item) => item.id}
-        renderItem={renderHistoryItem}
-        ListHeaderComponent={listHeader}
-        ListEmptyComponent={<Text style={styles.emptyText}>No scans yet.</Text>}
-        contentContainerStyle={styles.listContent}
-        keyboardShouldPersistTaps="handled"
-      />
+      <Text style={styles.headerTitle}>Message Scanner</Text>
+      
+      <View style={styles.inputContainer}>
+        <TextInput
+          style={styles.textInput}
+          multiline
+          numberOfLines={6}
+          placeholder="Paste or type a message, email, or link here to analyze it for scams or phishing..."
+          placeholderTextColor="#8B8F99"
+          value={textToScan}
+          onChangeText={setTextToScan}
+          textAlignVertical="top"
+        />
+        <Pressable 
+          style={[styles.scanButton, (textToScan.trim().length === 0 || scannerStore.isScanning) && styles.disabledButton]} 
+          onPress={handleScan}
+          disabled={textToScan.trim().length === 0 || scannerStore.isScanning}
+        >
+          {scannerStore.isScanning ? (
+            <ActivityIndicator color="#0E0F11" />
+          ) : (
+            <Text style={styles.scanButtonText}>Analyze Message</Text>
+          )}
+        </Pressable>
+      </View>
+
+      <Text style={styles.sectionTitle}>Scan History</Text>
+      
+      {scannerStore.history.length === 0 ? (
+        <Text style={styles.emptyText}>No manual scans yet. Paste a message above.</Text>
+      ) : (
+        <ScrollView style={styles.historyList}>
+          {scannerStore.history.map((record, index) => {
+            const statusColor = getStatusColor(record.classification);
+            return (
+              <Pressable 
+                key={record.id} 
+                style={[styles.historyCard, index === 0 && { marginTop: 8 }]}
+                onPress={() => router.push({ pathname: "/scan/result", params: { index: index.toString() } })}
+              >
+                <View style={styles.historyHeader}>
+                   <View style={styles.historyTitleRow}>
+                     <Feather name={getStatusIcon(record.classification)} size={16} color={statusColor} />
+                     <Text style={[styles.historyClassification, { color: statusColor }]}>
+                       {record.classification} ({record.confidence}%)
+                     </Text>
+                   </View>
+                   <Text style={styles.timestamp}>{new Date(record.timestamp).toLocaleTimeString()}</Text>
+                </View>
+                <Text style={styles.previewText} numberOfLines={2}>{record.messagePreview}</Text>
+              </Pressable>
+            );
+          })}
+          <View style={{height: 20}} />
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -165,123 +104,95 @@ export default function ScannerScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: THEME.colors.background,
+    backgroundColor: "#0E0F11",
+    padding: 20,
+    paddingTop: 60,
   },
-  title: {
-    color: THEME.colors.textPrimary,
-    fontSize: 22,
-    fontFamily: THEME.fontFamily.dmSans,
-    fontWeight: "700",
+  headerTitle: {
+    color: "#E8E9EB",
+    fontSize: 28,
+    fontFamily: "DMSans-Regular",
+    fontWeight: "bold",
+    marginBottom: 20,
   },
-  subtitle: {
-    color: THEME.colors.textSecondary,
-    fontSize: 13,
-    fontFamily: THEME.fontFamily.dmSans,
+  inputContainer: {
+    marginBottom: 24,
   },
-  listContent: {
-    padding: 16,
-    gap: 12,
-    paddingBottom: 28,
-  },
-  headerBlock: {
-    gap: 12,
-  },
-  inputWrap: {
+  textInput: {
+    backgroundColor: "#16181C",
+    borderColor: "#2A2D35",
     borderWidth: 1,
-    borderColor: THEME.colors.border,
-    borderRadius: THEME.borderRadius,
-    backgroundColor: THEME.colors.surface,
-    minHeight: 150,
-  },
-  input: {
-    color: THEME.colors.textPrimary,
-    fontFamily: THEME.fontFamily.dmSans,
-    fontSize: 14,
-    lineHeight: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    minHeight: 150,
-  },
-  counterText: {
-    color: THEME.colors.textSecondary,
-    fontSize: 12,
-    fontFamily: THEME.fontFamily.jetbrainsMono,
-    textAlign: "right",
-  },
-  button: {
-    backgroundColor: THEME.colors.accent,
-    borderRadius: THEME.borderRadius,
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 46,
-    paddingHorizontal: 12,
-  },
-  buttonDisabled: {
-    opacity: 0.55,
-  },
-  buttonText: {
-    color: "#0E0F11",
-    fontSize: 15,
-    fontFamily: THEME.fontFamily.dmSans,
-    fontWeight: "700",
-  },
-  progressTrack: {
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: THEME.colors.border,
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: "100%",
-    backgroundColor: THEME.colors.accent,
-  },
-  historyTitle: {
-    color: THEME.colors.textPrimary,
+    color: "#E8E9EB",
+    padding: 16,
+    borderRadius: 12,
+    fontFamily: "DMSans-Regular",
     fontSize: 16,
-    fontFamily: THEME.fontFamily.dmSans,
-    fontWeight: "700",
-    marginTop: 4,
+    minHeight: 120,
+    marginBottom: 16,
+  },
+  scanButton: {
+    backgroundColor: "#4ADE80",
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  disabledButton: {
+    backgroundColor: "#4ADE8080",
+  },
+  scanButtonText: {
+    color: "#0E0F11",
+    fontFamily: "DMSans-Regular",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  sectionTitle: {
+    color: "#E8E9EB",
+    fontSize: 18,
+    fontFamily: "DMSans-Regular",
+    fontWeight: "bold",
+    marginBottom: 12,
+  },
+  historyList: {
+    flex: 1,
   },
   historyCard: {
+    backgroundColor: "#16181C",
     borderWidth: 1,
-    borderColor: THEME.colors.border,
-    borderRadius: THEME.borderRadius,
-    backgroundColor: THEME.colors.surface,
-    padding: 12,
-    gap: 8,
+    borderColor: "#2A2D35",
+    borderRadius: 10,
+    padding: 16,
+    marginBottom: 12,
+    flexDirection: "column"
   },
   historyHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 8,
+  },
+  historyTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
   },
-  timestampText: {
-    color: THEME.colors.textSecondary,
-    fontFamily: THEME.fontFamily.jetbrainsMono,
-    fontSize: 11,
-    flex: 1,
+  historyClassification: {
+    fontFamily: "JetBrainsMono-Regular",
+    fontWeight: "bold",
+    fontSize: 14,
   },
-  classificationBadge: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+  timestamp: {
+    color: "#8B8F99",
+    fontFamily: "JetBrainsMono-Regular",
+    fontSize: 10,
   },
-  classificationBadgeText: {
-    fontFamily: THEME.fontFamily.dmSans,
-    fontWeight: "700",
-    fontSize: 11,
-    letterSpacing: 0.4,
+  previewText: {
+    color: "#8B8F99",
+    fontFamily: "DMSans-Regular",
+    fontSize: 14,
   },
   emptyText: {
-    color: THEME.colors.textSecondary,
-    fontFamily: THEME.fontFamily.dmSans,
-    fontSize: 13,
-  },
-  apiKeyHint: {
-    color: THEME.colors.warning,
-    fontFamily: THEME.fontFamily.dmSans,
-    fontSize: 13,
-  },
+    color: "#8B8F99",
+    fontFamily: "DMSans-Regular",
+    fontStyle: "italic",
+  }
 });

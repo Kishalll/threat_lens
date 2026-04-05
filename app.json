@@ -30,7 +30,8 @@
       "expo-router",
       "expo-font",
       "expo-secure-store",
-      "expo-sqlite"
+      "expo-sqlite",
+      "./withThreatLensConfig.js"
     ]
   }
 }

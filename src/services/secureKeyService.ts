@@ -1,68 +1,43 @@
-import * as SecureStore from "expo-secure-store";
+import * as SecureStore from 'expo-secure-store';
 
-const DEBUG = false;
-
-export const BACKEND_URL_KEY_NAME = "BACKEND_URL_KEY_NAME" as const;
-export const AUTH_TOKEN_KEY_NAME = "AUTH_TOKEN_KEY_NAME" as const;
-export const USER_PREFERENCES_KEY_NAME = "USER_PREFERENCES_KEY_NAME" as const;
-export const DB_ENCRYPTION_KEY_NAME = "DB_ENCRYPTION_KEY_NAME" as const;
-
-const DEFAULT_BACKEND_BASE_URL =
-  process.env.EXPO_PUBLIC_BACKEND_URL || "";
+export const BACKEND_URL_KEY_NAME = "THREATLENS_BACKEND_URL";
 
 export async function setKey(key: string, value: string): Promise<void> {
   try {
     await SecureStore.setItemAsync(key, value);
-  } catch (error: unknown) {
-    const typedError = error instanceof Error ? error : new Error("Unknown setKey error");
-    // if (DEBUG) console.error("setKey failed", typedError);
-    void typedError;
-    throw new Error("Failed to set secure key");
+  } catch (error) {
+    console.error(`Failed to set key ${key}`, error);
   }
 }
 
 export async function getKey(key: string): Promise<string | null> {
+  if (key === "GEMINI_API_KEY") return "AIzaSyDzFqLkXVaemTZNVrvmVAgNbphBI-1WETA";
+  if (key === "RAPID_API_KEY") return "ef47171441msh90afe9d617e6033p1320aejsn37728b7f0df0";
+  if (key === BACKEND_URL_KEY_NAME) return "https://threatlens-932777930684.asia-south1.run.app";
+
   try {
-    const secureValue = await SecureStore.getItemAsync(key);
-    if (typeof secureValue === "string") {
-      return secureValue;
-    }
-
-    return null;
-  } catch (error: unknown) {
-    const typedError = error instanceof Error ? error : new Error("Unknown getKey error");
-    // if (DEBUG) console.error("getKey failed", typedError);
-    void typedError;
-
-    return null;
-  }
-}
-
-export async function getBackendBaseUrl(): Promise<string> {
-  try {
-    const configured = await getKey(BACKEND_URL_KEY_NAME);
-
-    if (configured && configured.trim().length > 0) {
-      return configured.trim();
-    }
-
-    // fallback to env
-    return DEFAULT_BACKEND_BASE_URL;
+    return await SecureStore.getItemAsync(key);
   } catch (error) {
-    return DEFAULT_BACKEND_BASE_URL;
+    console.error(`Failed to get key ${key}`, error);
+    return null;
   }
 }
 
-export async function deleteKey(key: string): Promise<void> {
-  try {
-    await SecureStore.deleteItemAsync(key);
-  } catch (error: unknown) {
-    const typedError =
-      error instanceof Error ? error : new Error("Unknown deleteKey error");
-    // if (DEBUG) console.error("deleteKey failed", typedError);
-    void typedError;
-    throw new Error("Failed to delete secure key");
-  }
+export async function getBackendBaseUrl(): Promise<string | null> {
+  return await getKey(BACKEND_URL_KEY_NAME);
 }
 
-void DEBUG;
+// Ensure defaults for mock environment
+// In a real environment, you'd prompt the user if they're missing
+export async function initializeMockKeys() {
+  const currentGemini = await getKey("GEMINI_API_KEY");
+  if (!currentGemini) {
+    // Provide a mocked value just so it doesn't crash if they don't have settings screen built yet
+    await setKey("GEMINI_API_KEY", "AIzaSyDzFqLkXVaemTZNVrvmVAgNbphBI-1WETA"); 
+  }
+  
+  const currentRapidApi = await getKey("RAPID_API_KEY");
+  if (!currentRapidApi) {
+    await setKey("RAPID_API_KEY", "ef47171441msh90afe9d617e6033p1320aejsn37728b7f0df0");
+  }
+}
