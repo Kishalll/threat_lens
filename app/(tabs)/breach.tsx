@@ -1,13 +1,39 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { StyleSheet, View, Text, ScrollView, Pressable, TextInput, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import Feather from "@expo/vector-icons/Feather";
 import { useBreachStore } from "../../src/stores/breachStore";
 
+const ALL_FILTER = "__ALL__";
+
 export default function BreachScreen() {
   const router = useRouter();
   const breachStore = useBreachStore();
   const [newEmail, setNewEmail] = useState("");
+  const [selectedCredentialFilter, setSelectedCredentialFilter] = useState<string>(ALL_FILTER);
+
+  const credentialFilters = useMemo(
+    () => breachStore.credentials.map((cred) => cred.value),
+    [breachStore.credentials]
+  );
+
+  const filteredBreaches = useMemo(() => {
+    if (selectedCredentialFilter === ALL_FILTER) {
+      return breachStore.breaches;
+    }
+    return breachStore.breaches.filter(
+      (breach) => breach.matchedCredential === selectedCredentialFilter
+    );
+  }, [breachStore.breaches, selectedCredentialFilter]);
+
+  useEffect(() => {
+    if (
+      selectedCredentialFilter !== ALL_FILTER &&
+      !credentialFilters.includes(selectedCredentialFilter)
+    ) {
+      setSelectedCredentialFilter(ALL_FILTER);
+    }
+  }, [credentialFilters, selectedCredentialFilter]);
 
   const handleAddCredential = () => {
     if (newEmail.trim().length > 3) {
@@ -63,10 +89,54 @@ export default function BreachScreen() {
           </Pressable>
         </View>
 
-        {breachStore.breaches.length === 0 && !breachStore.isScanning ? (
-          <Text style={styles.safeText}>No breaches detected! You are secure.</Text>
+        {breachStore.credentials.length > 0 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterRow}
+          >
+            <Pressable
+              onPress={() => setSelectedCredentialFilter(ALL_FILTER)}
+              style={[
+                styles.filterChip,
+                selectedCredentialFilter === ALL_FILTER && styles.filterChipActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  selectedCredentialFilter === ALL_FILTER && styles.filterChipTextActive,
+                ]}
+              >
+                All
+              </Text>
+            </Pressable>
+
+            {credentialFilters.map((value) => {
+              const isActive = selectedCredentialFilter === value;
+              return (
+                <Pressable
+                  key={value}
+                  onPress={() => setSelectedCredentialFilter(value)}
+                  style={[styles.filterChip, isActive && styles.filterChipActive]}
+                >
+                  <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
+                    {value}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        )}
+
+        {filteredBreaches.length === 0 && !breachStore.isScanning ? (
+          <Text style={styles.safeText}>
+            {selectedCredentialFilter === ALL_FILTER
+              ? "No breaches detected! You are secure."
+              : `No breaches found for ${selectedCredentialFilter}.`}
+          </Text>
         ) : (
-          breachStore.breaches.map((breach) => (
+          filteredBreaches.map((breach) => (
             <Pressable 
               key={breach.id} 
               style={styles.breachCard}
@@ -148,6 +218,31 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontFamily: "DMSans-Regular",
     fontWeight: "bold",
+  },
+  filterRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingBottom: 12,
+  },
+  filterChip: {
+    borderWidth: 1,
+    borderColor: "#2A2D35",
+    backgroundColor: "#16181C",
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  filterChipActive: {
+    borderColor: "#4ADE80",
+    backgroundColor: "#4ADE801A",
+  },
+  filterChipText: {
+    color: "#8B8F99",
+    fontFamily: "JetBrainsMono-Regular",
+    fontSize: 12,
+  },
+  filterChipTextActive: {
+    color: "#4ADE80",
   },
   credentialRow: {
     flexDirection: "row",

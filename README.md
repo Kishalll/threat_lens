@@ -7,6 +7,7 @@ This project requires environment variables for both frontend (Expo) and backend
 Create a `.env` file in the root directory:
 
 EXPO_PUBLIC_BACKEND_URL=http://YOUR_LOCAL_IP:3000
+EXPO_PUBLIC_GEMINI_API_KEY=your_gemini_api_key_here
 
 Example:
 EXPO_PUBLIC_BACKEND_URL=http://192.168.29.182:3000
