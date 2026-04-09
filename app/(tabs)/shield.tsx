@@ -1,21 +1,31 @@
-import React, { useState } from "react";
-import { StyleSheet, View, Text, Pressable, Image, ActivityIndicator, Alert } from "react-native";
+import React, { useState, useRef } from "react";
+import { StyleSheet, View, Text, Pressable, Image, ActivityIndicator, Alert, TouchableOpacity } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
 import * as FileSystem from "expo-file-system/legacy";
 import Feather from "@expo/vector-icons/Feather";
-import axios from "axios";
 
 import { useDashboardStore } from "../../src/stores/dashboardStore";
 import { applyLsbWatermark } from "../../src/utils/lsbWatermark";
 import { writeProtectionMetadata } from "../../src/utils/exifMetadata";
-import { getBackendBaseUrl } from "../../src/services/secureKeyService";
+import { addAdversarialNoise } from "../../src/utils/adversarialNoise";
+
+type ProcessStep = 'idle' | 'picked' | 'watermarking' | 'noise' | 'metadata' | 'done' | 'error';
 
 export default function ShieldScreen() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [protectedImage, setProtectedImage] = useState<string | null>(null);
-  const [step, setStep] = useState<number>(0); 
-  // 0: idle, 1: picking, 2: watermarking, 3: cloud ML, 4: metadata, 5: done
+  const [step, setStep] = useState<ProcessStep>('idle');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const cancellingRef = useRef(false);
+
+  const resetState = () => {
+    setSelectedImage(null);
+    setProtectedImage(null);
+    setStep('idle');
+    setErrorMessage(null);
+    cancellingRef.current = false;
+  };
 
   const pickImage = async () => {
     let result = await ImagePicker.launchImageLibraryAsync({
@@ -27,8 +37,15 @@ export default function ShieldScreen() {
     if (!result.canceled) {
       setSelectedImage(result.assets[0].uri);
       setProtectedImage(null);
-      setStep(1);
+      setStep('picked');
+      setErrorMessage(null);
     }
+  };
+
+  const cancelProcessing = () => {
+    cancellingRef.current = true;
+    setStep('error');
+    setErrorMessage("Protection cancelled by user.");
   };
 
   const processImage = async () => {
@@ -36,59 +53,46 @@ export default function ShieldScreen() {
 
     const cacheDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
     if (!cacheDir) {
-      Alert.alert("Protection Failed", "No writable cache directory available on this device.");
+      setStep('error');
+      setErrorMessage("No writable cache directory available on this device.");
       return;
     }
 
-    try {
-      // Step 2: LSB Watermark
-      setStep(2);
-      const { uri: watermarkedUri, uuid } = await applyLsbWatermark(selectedImage);
+    cancellingRef.current = false;
 
-      // Step 3: Cloud Function (Adversarial Noise via FGSM)
-      setStep(3);
-      const base64Data = await FileSystem.readAsStringAsync(watermarkedUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      
-      const functionUrl = await getBackendBaseUrl() || "https://us-central1-mock-project.cloudfunctions.net/adversarial_noise";
-      
-      let noiseUri = watermarkedUri; // fallback
-      try {
-        const response = await axios.post(functionUrl, { image: base64Data }, { 
-          timeout: 10000,
-          headers: {
-            "Authorization": "Bearer RPDfiPBuMvXIo9dirNZz1kh4QcVhBnOjZGxfsYUDKVwU2Ye3T7ibPjOJmUpAgTLc"
-          }
-        });
-        if (response.data && response.data.processedImage) {
-           const processedB64 = response.data.processedImage;
-           noiseUri = `${cacheDir}noise_${Date.now()}.jpg`;
-           await FileSystem.writeAsStringAsync(noiseUri, processedB64, {
-             encoding: FileSystem.EncodingType.Base64,
-           });
-        }
-      } catch (err) {
-        console.warn("Cloud function failed, falling back to local only", err);
-      }
+    try {
+      // Step 2: LSB Watermark (UUID generation)
+      setStep('watermarking');
+      const { uri: watermarkedUri, uuid } = await applyLsbWatermark(selectedImage);
+      if (cancellingRef.current) return;
+
+      // Step 3: On-device Adversarial Noise
+      setStep('noise');
+      const noiseUri = await addAdversarialNoise(watermarkedUri, 0.05);
+      if (cancellingRef.current) return;
 
       // Step 4: Metadata Tag
-      setStep(4);
+      setStep('metadata');
       const finalUri = await writeProtectionMetadata(noiseUri, uuid);
+      if (cancellingRef.current) return;
 
       setProtectedImage(finalUri);
-      
+
       // Update Dashboard Metric
       const dash = useDashboardStore.getState();
       dash.updateDashboardData({
         protectedImagesCount: dash.protectedImagesCount + 1
       });
 
-      setStep(5);
+      setStep('done');
     } catch (error) {
       console.error(error);
-      Alert.alert("Protection Failed", "An error occurred while securing the image.");
-      setStep(0);
+      if (cancellingRef.current) {
+        setErrorMessage("Protection cancelled by user.");
+      } else {
+        setErrorMessage("An error occurred while securing the image.");
+      }
+      setStep('error');
     }
   };
 
@@ -119,51 +123,96 @@ export default function ShieldScreen() {
         {protectedImage ? (
           <Image source={{ uri: protectedImage }} style={styles.imageBox} />
         ) : selectedImage ? (
-          <Image source={{ uri: selectedImage }} style={styles.imageBox} />
+          <Image source={{ uri: selectedImage } as any} style={styles.imageBox} />
         ) : (
           <View style={[styles.imageBox, styles.placeholderBox]}>
             <Feather name="image" size={48} color="#2A2D35" />
             <Text style={styles.placeholderText}>No image selected</Text>
           </View>
         )}
+        {/* X button to clear image */}
+        {(selectedImage || protectedImage) && (
+          <TouchableOpacity style={styles.clearButton} onPress={resetState}>
+            <Feather name="x" size={20} color="#E8E9EB" />
+          </TouchableOpacity>
+        )}
       </View>
 
-      {step > 1 && step < 5 && (
+      {/* Processing stepper */}
+      {['watermarking', 'noise', 'metadata'].includes(step) && (
         <View style={styles.stepperContainer}>
           <ActivityIndicator size="small" color="#4ADE80" />
           <Text style={styles.stepText}>
-            {step === 2 && "Embeding invisible watermark..."}
-            {step === 3 && "Applying AI-resistance layer..."}
-            {step === 4 && "Updating EXIF immutability tags..."}
+            {step === 'watermarking' && "Embedding invisible watermark..."}
+            {step === 'noise' && "Applying AI-resistance layer..."}
+            {step === 'metadata' && "Updating EXIF immutability tags..."}
           </Text>
         </View>
       )}
 
-      {step === 5 && (
+      {/* Success message */}
+      {step === 'done' && (
         <View style={styles.successContainer}>
           <Feather name="check-circle" size={24} color="#4ADE80" />
           <Text style={styles.successText}>Image is fully protected!</Text>
         </View>
       )}
 
+      {/* Error message */}
+      {step === 'error' && errorMessage && (
+        <View style={styles.errorContainer}>
+          <Feather name="alert-circle" size={24} color="#EF4444" />
+          <Text style={styles.errorText}>{errorMessage}</Text>
+        </View>
+      )}
+
       <View style={styles.buttonsContainer}>
-        {!selectedImage || step === 5 ? (
+        {/* Idle state - show select button */}
+        {step === 'idle' && (
           <Pressable style={styles.primaryButton} onPress={pickImage}>
             <Feather name="upload" size={20} color="#0E0F11" />
             <Text style={styles.primaryButtonText}>Select Photo</Text>
           </Pressable>
-        ) : step === 1 ? (
+        )}
+
+        {/* Picked state - show protect button */}
+        {step === 'picked' && (
           <Pressable style={styles.primaryButton} onPress={processImage}>
             <Feather name="shield" size={20} color="#0E0F11" />
             <Text style={styles.primaryButtonText}>Protect Image</Text>
           </Pressable>
-        ) : null}
+        )}
 
-        {step === 5 && (
+        {/* Processing state - show cancel button */}
+        {['watermarking', 'noise', 'metadata'].includes(step) && (
+          <Pressable style={styles.cancelButton} onPress={cancelProcessing}>
+            <Feather name="x-circle" size={20} color="#EF4444" />
+            <Text style={styles.cancelButtonText}>Cancel Protection</Text>
+          </Pressable>
+        )}
+
+        {/* Done state - show download button */}
+        {step === 'done' && (
           <Pressable style={styles.secondaryButton} onPress={saveToGallery}>
             <Feather name="download" size={20} color="#E8E9EB" />
             <Text style={styles.secondaryButtonText}>Save to Gallery</Text>
           </Pressable>
+        )}
+
+        {/* Error state - show retry buttons */}
+        {step === 'error' && (
+          <>
+            <Pressable style={styles.primaryButton} onPress={pickImage}>
+              <Feather name="upload" size={20} color="#0E0F11" />
+              <Text style={styles.primaryButtonText}>Select New Photo</Text>
+            </Pressable>
+            {selectedImage && (
+              <Pressable style={styles.secondaryButton} onPress={processImage}>
+                <Feather name="shield" size={20} color="#E8E9EB" />
+                <Text style={styles.secondaryButtonText}>Try Again</Text>
+              </Pressable>
+            )}
+          </>
         )}
       </View>
     </View>
@@ -279,5 +328,51 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "bold",
     fontFamily: "DMSans-Regular",
+  },
+  clearButton: {
+    position: "absolute",
+    top: -8,
+    right: -8,
+    backgroundColor: "#2A2D35",
+    borderRadius: 16,
+    width: 32,
+    height: 32,
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 10,
+  },
+  cancelButton: {
+    backgroundColor: "transparent",
+    borderWidth: 2,
+    borderColor: "#EF4444",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+    borderRadius: 12,
+    gap: 8,
+  },
+  cancelButtonText: {
+    color: "#EF4444",
+    fontSize: 16,
+    fontWeight: "bold",
+    fontFamily: "DMSans-Regular",
+  },
+  errorContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#EF44441A",
+    padding: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#EF4444",
+    marginBottom: 24,
+  },
+  errorText: {
+    color: "#EF4444",
+    fontFamily: "DMSans-Regular",
+    fontWeight: "bold",
+    marginLeft: 12,
+    flex: 1,
   }
 });
