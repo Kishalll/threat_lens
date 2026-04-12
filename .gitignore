@@ -42,4 +42,3 @@ yarn-error.*
 /android
 
 .env
-backend/.env

@@ -29,14 +29,6 @@ From the project root:
 npm install
 ```
 
-If you plan to run backend too:
-
-```bash
-cd backend
-npm install
-cd ..
-```
-
 ## 3. Environment Variables
 
 Create a file named `.env` in project root.
@@ -45,10 +37,12 @@ Add:
 
 ```env
 EXPO_PUBLIC_GEMINI_API_KEY=your_new_gemini_api_key
+EXPO_PUBLIC_CLOUD_FUNCTION_URL=https://asia-south1-threatlens-492816.cloudfunctions.net/protect-image
 ```
 
 Notes:
 - This app reads Gemini key from `EXPO_PUBLIC_GEMINI_API_KEY`.
+- Cloud image protection uses `EXPO_PUBLIC_CLOUD_FUNCTION_URL`.
 - If you change `.env`, restart Expo with cache clear:
 
 ```bash
@@ -104,26 +98,26 @@ npx expo start --dev-client
 
 Then press `a` to open in the installed app on emulator/device.
 
-## 6. Backend (Optional)
+## 6. Cloud Function (Image Protection)
 
-The mobile app currently performs core breach/provider calls directly.
-Backend is optional for local API experiments.
+Image protection runs through Google Cloud Function.
 
-To run backend:
-
-1. Create `backend/.env`:
-
-```env
-GEMINI_API_KEY=your_new_gemini_api_key
-PORT=3000
-```
-
-2. Start backend:
+Deploy command (from `cloud-function` folder):
 
 ```bash
-cd backend
-npm start
+gcloud functions deploy protect-image \
+	--gen2 \
+	--runtime python312 \
+	--region asia-south1 \
+	--trigger-http \
+	--allow-unauthenticated \
+	--memory 1Gi \
+	--timeout 120 \
+	--source ./ \
+	--entry-point protect_image_endpoint
 ```
+
+After deployment, set `EXPO_PUBLIC_CLOUD_FUNCTION_URL` in root `.env`.
 
 ## 7. Troubleshooting
 
@@ -174,5 +168,5 @@ npx expo start --tunnel
 ## 8. Security Notes
 
 - Never commit `.env` files.
-- `.gitignore` already excludes `.env` and `backend/.env`.
+- `.gitignore` already excludes `.env`.
 - Rotate Gemini key immediately if leaked.

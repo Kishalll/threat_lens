@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState } from "react";
 import { StyleSheet, View, Text, Pressable, Image, ActivityIndicator, Alert, TouchableOpacity } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
@@ -6,25 +6,21 @@ import * as FileSystem from "expo-file-system/legacy";
 import Feather from "@expo/vector-icons/Feather";
 
 import { useDashboardStore } from "../../src/stores/dashboardStore";
-import { applyLsbWatermark } from "../../src/utils/lsbWatermark";
-import { writeProtectionMetadata } from "../../src/utils/exifMetadata";
-import { addAdversarialNoise } from "../../src/utils/adversarialNoise";
+import { getCloudFunctionUrl } from "../../src/services/secureKeyService";
 
-type ProcessStep = 'idle' | 'picked' | 'watermarking' | 'noise' | 'metadata' | 'done' | 'error';
+type ProcessStep = 'idle' | 'picked' | 'protecting' | 'done' | 'error';
 
 export default function ShieldScreen() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [protectedImage, setProtectedImage] = useState<string | null>(null);
   const [step, setStep] = useState<ProcessStep>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const cancellingRef = useRef(false);
 
   const resetState = () => {
     setSelectedImage(null);
     setProtectedImage(null);
     setStep('idle');
     setErrorMessage(null);
-    cancellingRef.current = false;
   };
 
   const pickImage = async () => {
@@ -42,56 +38,89 @@ export default function ShieldScreen() {
     }
   };
 
-  const cancelProcessing = () => {
-    cancellingRef.current = true;
-    setStep('error');
-    setErrorMessage("Protection cancelled by user.");
-  };
-
   const processImage = async () => {
     if (!selectedImage) return;
 
-    const cacheDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
-    if (!cacheDir) {
-      setStep('error');
-      setErrorMessage("No writable cache directory available on this device.");
-      return;
-    }
-
-    cancellingRef.current = false;
+    setStep('protecting');
+    setErrorMessage(null);
 
     try {
-      // Step 2: LSB Watermark (UUID generation)
-      setStep('watermarking');
-      const { uri: watermarkedUri, uuid } = await applyLsbWatermark(selectedImage);
-      if (cancellingRef.current) return;
+      // Read the selected image as base64
+      const base64Data = await FileSystem.readAsStringAsync(selectedImage, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
 
-      // Step 3: On-device Adversarial Noise
-      setStep('noise');
-      const noiseUri = await addAdversarialNoise(watermarkedUri, 0.05);
-      if (cancellingRef.current) return;
+      // Get the cloud function URL
+      const functionUrl = await getCloudFunctionUrl();
+      if (!functionUrl) {
+        throw new Error("Cloud function URL not configured. Please set it in Settings.");
+      }
 
-      // Step 4: Metadata Tag
-      setStep('metadata');
-      const finalUri = await writeProtectionMetadata(noiseUri, uuid);
-      if (cancellingRef.current) return;
+      const normalizedBase = functionUrl.trim().replace(/\/+$/, "");
+      const endpointUrl = normalizedBase.endsWith("/protect-image")
+        ? normalizedBase
+        : `${normalizedBase}/protect-image`;
 
-      setProtectedImage(finalUri);
+      // Send as JSON with base64 image (supported by cloud function)
+      const requestBody = {
+        image: base64Data,
+        strength: 0.05,
+      };
+
+      const response = await fetch(endpointUrl, {
+        method: "POST",
+        body: JSON.stringify(requestBody),
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Server error: ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || "Protection failed");
+      }
+
+      // The cloud function returns base64 image data
+      // Parse the data URI: "data:image/jpeg;base64,<base64data>"
+      const dataUri = result.image;
+      const base64Match = dataUri.match(/^data:image\/(jpeg|png|jpg|webp);base64,(.+)$/);
+
+      if (!base64Match) {
+        throw new Error("Invalid image data received from server.");
+      }
+
+      const imageType = base64Match[1];
+      const imageData = base64Match[2];
+
+      // Save protected image to cache
+      const cacheDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+      if (!cacheDir) throw new Error("No cache directory available");
+
+      const fileExt = imageType === 'jpeg' || imageType === 'jpg' ? 'jpg' : imageType;
+      const protectedUri = `${cacheDir}protected_${Date.now()}.${fileExt}`;
+
+      await FileSystem.writeAsStringAsync(protectedUri, imageData, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      setProtectedImage(protectedUri);
 
       // Update Dashboard Metric
       const dash = useDashboardStore.getState();
       dash.updateDashboardData({
-        protectedImagesCount: dash.protectedImagesCount + 1
+        protectedImagesCount: dash.protectedImagesCount + 1,
       });
 
       setStep('done');
-    } catch (error) {
-      console.error(error);
-      if (cancellingRef.current) {
-        setErrorMessage("Protection cancelled by user.");
-      } else {
-        setErrorMessage("An error occurred while securing the image.");
-      }
+    } catch (error: any) {
+      console.error("Image protection error:", error);
+      setErrorMessage(error.message || "An error occurred while securing the image.");
       setStep('error');
     }
   };
@@ -106,7 +135,7 @@ export default function ShieldScreen() {
       } else {
         Alert.alert("Permission Required", "Allow access to save images.");
       }
-    } catch(err) {
+    } catch (err) {
       console.error(err);
       Alert.alert("Save Failed", "Could not save to gallery.");
     }
@@ -116,7 +145,7 @@ export default function ShieldScreen() {
     <View style={styles.container}>
       <Text style={styles.headerTitle}>Image Shield</Text>
       <Text style={styles.subtitle}>
-        Protect your images from AI deepfake extraction by applying steganographic metadata and adversarial noise.
+        Protect your images from AI deepfake extraction by applying adversarial noise via cloud processing.
       </Text>
 
       <View style={styles.imageContainer}>
@@ -138,14 +167,12 @@ export default function ShieldScreen() {
         )}
       </View>
 
-      {/* Processing stepper */}
-      {['watermarking', 'noise', 'metadata'].includes(step) && (
+      {/* Processing indicator */}
+      {step === 'protecting' && (
         <View style={styles.stepperContainer}>
           <ActivityIndicator size="small" color="#4ADE80" />
           <Text style={styles.stepText}>
-            {step === 'watermarking' && "Embedding invisible watermark..."}
-            {step === 'noise' && "Applying AI-resistance layer..."}
-            {step === 'metadata' && "Updating EXIF immutability tags..."}
+            Applying 6-layer adversarial protection via cloud...
           </Text>
         </View>
       )}
@@ -184,8 +211,8 @@ export default function ShieldScreen() {
         )}
 
         {/* Processing state - show cancel button */}
-        {['watermarking', 'noise', 'metadata'].includes(step) && (
-          <Pressable style={styles.cancelButton} onPress={cancelProcessing}>
+        {step === 'protecting' && (
+          <Pressable style={styles.cancelButton} onPress={resetState}>
             <Feather name="x-circle" size={20} color="#EF4444" />
             <Text style={styles.cancelButtonText}>Cancel Protection</Text>
           </Pressable>
