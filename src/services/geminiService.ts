@@ -50,10 +50,18 @@ const CASUAL_SAFE_PATTERNS: RegExp[] = [
 ];
 
 async function getGeminiClient() {
-  const apiKey = await getKey("GEMINI_API_KEY");
+  // 1. Try to get key from process.env (Loaded from your .env file)
+  let apiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+
+  // 2. Fallback to SecureStore if not in env
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY not found in secure store");
+    apiKey = await getKey("GEMINI_API_KEY");
   }
+
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY not found. Please add EXPO_PUBLIC_GEMINI_API_KEY to your .env file.");
+  }
+
   return new GoogleGenerativeAI(apiKey);
 }
 
