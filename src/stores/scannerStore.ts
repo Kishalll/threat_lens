@@ -30,7 +30,11 @@ export const useScannerStore = create<ScannerState>()((set, get) => ({
       dash.updateDashboardData({
         totalMessagesScanCount: dash.totalMessagesScanCount + 1,
         flaggedMessagesScanCount: 
-          (result.classification === "SCAM" || result.classification === "PHISHING") 
+          (
+            result.classification === "SPAM" ||
+            result.classification === "SCAM" ||
+            result.classification === "PHISHING"
+          ) 
             ? dash.flaggedMessagesScanCount + 1 
             : dash.flaggedMessagesScanCount
       });

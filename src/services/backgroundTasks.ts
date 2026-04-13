@@ -6,6 +6,20 @@ import { checkAllCredentials } from "./breachApiService";
 
 const BREACH_CHECK_TASK = "BACKGROUND_BREACH_CHECK";
 
+function summarizeCredentials(values: string[]): string {
+  const uniqueValues = Array.from(new Set(values.filter((value) => value.trim().length > 0)));
+  if (uniqueValues.length === 0) {
+    return "your monitored accounts";
+  }
+  if (uniqueValues.length === 1) {
+    return uniqueValues[0];
+  }
+  if (uniqueValues.length === 2) {
+    return `${uniqueValues[0]} and ${uniqueValues[1]}`;
+  }
+  return `${uniqueValues[0]}, ${uniqueValues[1]}, and ${uniqueValues.length - 2} more`;
+}
+
 TaskManager.defineTask(BREACH_CHECK_TASK, async () => {
   try {
     const credentials = useBreachStore.getState().credentials;
@@ -28,11 +42,24 @@ TaskManager.defineTask(BREACH_CHECK_TASK, async () => {
     const newBreaches = results.filter(b => !prevIds.has(b.id));
 
     if (newBreaches.length > 0) {
+      const credentialSummary = summarizeCredentials(
+        newBreaches
+          .map((breach) => breach.matchedCredential)
+          .filter((value): value is string => typeof value === "string")
+      );
+
       // Fire local notification
       await sendLocalNotification(
         "New Data Breach Detected",
-        `${newBreaches.length} new breach(es) found affecting your monitored accounts. Tap to secure.`,
-        { type: "BREACH_ALERT", breachIds: newBreaches.map(b => b.id) }
+        `${newBreaches.length} new breach(es) found for ${credentialSummary}. Tap to review.`,
+        {
+          type: "BREACH_ALERT",
+          breachIds: newBreaches.map(b => b.id),
+          credentials: newBreaches
+            .map((breach) => breach.matchedCredential)
+            .filter((value): value is string => typeof value === "string"),
+          threatlensInternal: true,
+        }
       );
       return BackgroundFetch.BackgroundFetchResult.NewData;
     }

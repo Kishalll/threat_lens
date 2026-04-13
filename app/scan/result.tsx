@@ -5,13 +5,14 @@ import Feather from "@expo/vector-icons/Feather";
 import { useScannerStore } from "../../src/stores/scannerStore";
 
 export default function ScanResultScreen() {
-  const { index } = useLocalSearchParams<{ index?: string }>();
+  const { index, id } = useLocalSearchParams<{ index?: string; id?: string }>();
   const router = useRouter();
   const scannerStore = useScannerStore();
   
-  // Default to the most recent scan if ID isn't provided mapped properly
-  const recordIndex = index ? parseInt(index) : 0;
-  const record = scannerStore.history[recordIndex];
+  const parsedIndex = Number(index);
+  const recordById = id ? scannerStore.history.find((item) => item.id === id) : undefined;
+  const recordByIndex = Number.isInteger(parsedIndex) ? scannerStore.history[parsedIndex] : undefined;
+  const record = recordById ?? recordByIndex ?? scannerStore.history[0];
 
   if (!record) {
     return (

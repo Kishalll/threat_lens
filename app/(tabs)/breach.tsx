@@ -130,11 +130,15 @@ export default function BreachScreen() {
         )}
 
         {filteredBreaches.length === 0 && !breachStore.isScanning ? (
-          <Text style={styles.safeText}>
-            {selectedCredentialFilter === ALL_FILTER
-              ? "No breaches detected! You are secure."
-              : `No breaches found for ${selectedCredentialFilter}.`}
-          </Text>
+          breachStore.scanError ? (
+            <Text style={styles.errorText}>{breachStore.scanError}</Text>
+          ) : (
+            <Text style={styles.safeText}>
+              {selectedCredentialFilter === ALL_FILTER
+                ? "No breaches detected! You are secure."
+                : `No breaches found for ${selectedCredentialFilter}.`}
+            </Text>
+          )
         ) : (
           filteredBreaches.map((breach) => (
             <Pressable 
@@ -268,6 +272,11 @@ const styles = StyleSheet.create({
   },
   safeText: {
     color: "#4ADE80",
+    fontFamily: "DMSans-Regular",
+    marginTop: 8,
+  },
+  errorText: {
+    color: "#EF4444",
     fontFamily: "DMSans-Regular",
     marginTop: 8,
   },

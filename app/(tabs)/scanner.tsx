@@ -3,22 +3,29 @@ import { StyleSheet, View, Text, TextInput, Pressable, ScrollView, ActivityIndic
 import { useRouter } from "expo-router";
 import Feather from "@expo/vector-icons/Feather";
 import { useScannerStore } from "../../src/stores/scannerStore";
-import { Button } from "react-native";
-import { sendLocalNotification } from "../../src/services/notificationService";
 
 export default function ScannerScreen() {
   const router = useRouter();
   const scannerStore = useScannerStore();
   const [textToScan, setTextToScan] = useState("");
+  const [scanError, setScanError] = useState<string | null>(null);
 
   const handleScan = async () => {
     if (textToScan.trim().length === 0) return;
-    
-    await scannerStore.scanManualText(textToScan.trim());
-    setTextToScan("");
-    
-    // Once scan is done, the history[0] contains the result
-    router.push("/scan/result");
+
+    setScanError(null);
+
+    try {
+      const result = await scannerStore.scanManualText(textToScan.trim());
+      setTextToScan("");
+      router.push({ pathname: "/scan/result", params: { id: result.id } });
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "Message analysis failed. Please try again.";
+      setScanError(message);
+    }
   };
 
   const getStatusColor = (classification: string) => {
@@ -67,6 +74,8 @@ export default function ScannerScreen() {
             <Text style={styles.scanButtonText}>Analyze Message</Text>
           )}
         </Pressable>
+
+        {scanError ? <Text style={styles.errorText}>{scanError}</Text> : null}
       </View>
 
       <Text style={styles.sectionTitle}>Scan History</Text>
@@ -81,7 +90,7 @@ export default function ScannerScreen() {
               <Pressable 
                 key={record.id} 
                 style={[styles.historyCard, index === 0 && { marginTop: 8 }]}
-                onPress={() => router.push({ pathname: "/scan/result", params: { index: index.toString() } })}
+                onPress={() => router.push({ pathname: "/scan/result", params: { id: record.id } })}
               >
                 <View style={styles.historyHeader}>
                    <View style={styles.historyTitleRow}>
@@ -196,5 +205,10 @@ const styles = StyleSheet.create({
     color: "#8B8F99",
     fontFamily: "DMSans-Regular",
     fontStyle: "italic",
-  }
+  },
+  errorText: {
+    color: "#EF4444",
+    fontFamily: "DMSans-Regular",
+    marginTop: 10,
+  },
 });

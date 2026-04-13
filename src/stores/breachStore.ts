@@ -1,5 +1,13 @@
 import { create } from "zustand";
 import { BreachApiItem, checkAllCredentials } from "../services/breachApiService";
+import {
+  getCachedBreaches,
+  getCredentials,
+  replaceCachedBreaches,
+  replaceCredentials,
+  type StoredCredential,
+} from "../services/storageService";
+import { sendLocalNotification } from "../services/notificationService";
 import { useDashboardStore } from "./dashboardStore";
 
 // Type mapping for credentials
@@ -14,10 +22,53 @@ export interface BreachState {
   breaches: BreachApiItem[];
   isScanning: boolean;
   lastScanTimestamp: number;
+  scanError: string | null;
+  isHydrated: boolean;
   
   addCredential: (value: string, type: "email" | "username") => void;
   removeCredential: (id: string) => void;
-  runScan: () => Promise<void>;
+  runScan: (options?: { notifyOnNew?: boolean }) => Promise<void>;
+  hydrateFromStorage: () => Promise<void>;
+}
+
+function sortBreachesNewestFirst(breaches: BreachApiItem[]): BreachApiItem[] {
+  return [...breaches].sort((a, b) => {
+    const aTime = new Date(a.date).getTime();
+    const bTime = new Date(b.date).getTime();
+    return bTime - aTime;
+  });
+}
+
+function toStoredCredentials(credentials: Credential[]): StoredCredential[] {
+  return credentials.map((credential) => ({
+    id: credential.id,
+    value: credential.value,
+    type: credential.type,
+  }));
+}
+
+function formatCredentialSummary(breaches: BreachApiItem[]): string {
+  const values = Array.from(
+    new Set(
+      breaches
+        .map((breach) => breach.matchedCredential)
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    )
+  );
+
+  if (values.length === 0) {
+    return "your monitored accounts";
+  }
+
+  if (values.length === 1) {
+    return values[0];
+  }
+
+  if (values.length === 2) {
+    return `${values[0]} and ${values[1]}`;
+  }
+
+  return `${values[0]}, ${values[1]}, and ${values.length - 2} more`;
 }
 
 export const useBreachStore = create<BreachState>()((set, get) => ({
@@ -25,46 +76,159 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
   breaches: [],
   isScanning: false,
   lastScanTimestamp: 0,
+  scanError: null,
+  isHydrated: false,
 
   addCredential: (value, type) => {
+    const normalized = value.trim();
+    if (!normalized) {
+      return;
+    }
+
     set((state) => {
-      const exists = state.credentials.find((c) => c.value === value);
+      const exists = state.credentials.find(
+        (c) => c.value.toLowerCase() === normalized.toLowerCase()
+      );
       if (exists) return state;
+
+      const nextCredentials = [
+        ...state.credentials,
+        { id: Math.random().toString(), value: normalized, type },
+      ];
+
+      void replaceCredentials(toStoredCredentials(nextCredentials));
+
       return {
-        credentials: [...state.credentials, { id: Math.random().toString(), value, type }]
+        credentials: nextCredentials,
+        scanError: null,
       };
     });
+
     // Start scan on credential add
-    get().runScan();
+    void get().runScan({ notifyOnNew: true });
   },
 
   removeCredential: (id) => {
-    set((state) => ({
-      credentials: state.credentials.filter((c) => c.id !== id)
-    }));
+    set((state) => {
+      const nextCredentials = state.credentials.filter((c) => c.id !== id);
+      const allowedValues = new Set(nextCredentials.map((credential) => credential.value));
+      const nextBreaches = state.breaches.filter((breach) => {
+        if (!breach.matchedCredential) {
+          return true;
+        }
+        return allowedValues.has(breach.matchedCredential);
+      });
+
+      void replaceCredentials(toStoredCredentials(nextCredentials));
+      void replaceCachedBreaches(nextBreaches);
+
+      return {
+        credentials: nextCredentials,
+        breaches: nextBreaches,
+      };
+    });
+
+    useDashboardStore.getState().updateDashboardData({
+      activeBreachesCount: get().breaches.length,
+    });
   },
 
-  runScan: async () => {
-    set({ isScanning: true });
+  hydrateFromStorage: async () => {
+    try {
+      const [credentials, breaches] = await Promise.all([
+        getCredentials(),
+        getCachedBreaches(),
+      ]);
+
+      const sortedBreaches = sortBreachesNewestFirst(breaches);
+
+      set({
+        credentials,
+        breaches: sortedBreaches,
+        isHydrated: true,
+      });
+
+      useDashboardStore.getState().updateDashboardData({
+        activeBreachesCount: sortedBreaches.length,
+      });
+    } catch (error) {
+      console.error("Failed to hydrate breach data", error);
+      set({ isHydrated: true });
+    }
+  },
+
+  runScan: async (options = {}) => {
+    const notifyOnNew = options.notifyOnNew === true;
+    const currentCredentials = get().credentials;
+
+    if (currentCredentials.length === 0) {
+      set({ breaches: [], isScanning: false, scanError: null });
+      void replaceCachedBreaches([]);
+      useDashboardStore.getState().updateDashboardData({
+        activeBreachesCount: 0,
+      });
+      return;
+    }
+
+    set({ isScanning: true, scanError: null });
     
     try {
+      const previousBreaches = get().breaches;
+      const previousIds = new Set(previousBreaches.map((breach) => breach.id));
+
       const itemsToScan = get().credentials.map((c) => c.value);
       const results = await checkAllCredentials(itemsToScan);
+      const sortedResults = sortBreachesNewestFirst(results);
+      const newBreaches = sortedResults.filter((breach) => !previousIds.has(breach.id));
       
       set({ 
-        breaches: results,
+        breaches: sortedResults,
         lastScanTimestamp: Date.now(),
-        isScanning: false
+        isScanning: false,
+        scanError: null,
       });
+
+      void replaceCachedBreaches(sortedResults);
+      void replaceCredentials(toStoredCredentials(get().credentials));
 
       // Update the dashboard store with the count
       useDashboardStore.getState().updateDashboardData({
-        activeBreachesCount: results.length
+        activeBreachesCount: sortedResults.length
       });
+
+      if (notifyOnNew && newBreaches.length > 0) {
+        const credentialSummary = formatCredentialSummary(newBreaches);
+        await sendLocalNotification(
+          "New Data Breach Detected",
+          `New breach data found for ${credentialSummary}. Tap to review in Breach tab.`,
+          {
+            type: "BREACH_ALERT",
+            breachIds: newBreaches.map((breach) => breach.id),
+            credentials: newBreaches
+              .map((breach) => breach.matchedCredential)
+              .filter((value): value is string => typeof value === "string" && value.length > 0),
+            threatlensInternal: true,
+          }
+        );
+      }
 
     } catch (error) {
       console.error("Scan failed", error);
-      set({ isScanning: false });
+      const message =
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "Breach data fetch failed. Please try again.";
+
+      set({
+        breaches: [],
+        isScanning: false,
+        scanError: `${message} Please try again.`,
+      });
+
+      void replaceCachedBreaches([]);
+      useDashboardStore.getState().updateDashboardData({
+        activeBreachesCount: 0,
+      });
     }
   }
 }));

@@ -5,11 +5,15 @@ import { getKey } from "./secureKeyService";
 import type { ScanResult } from "../types";
 
 const GEMINI_MODEL_CANDIDATES = [
-  "gemini-1.5-flash",
-  "gemini-1.5-pro",
   "gemini-2.0-flash",
+  "gemini-1.5-flash",
   "gemini-2.5-flash",
+  "gemini-1.5-pro",
 ];
+
+const MODEL_BACKOFF_DEFAULT_MS = 60_000;
+const MODEL_BACKOFF_DAILY_QUOTA_MS = 6 * 60 * 60 * 1000;
+const modelCooldownUntil = new Map<string, number>();
 
 const GEMINI_SYSTEM_PROMPT = `SYSTEM: You are a cybersecurity expert specialising in consumer fraud detection. Focus on the Indian context (UPI scams, OTP fraud, KYC phishing).
 
@@ -108,6 +112,61 @@ function isCompromisedOrInvalidKeyError(error: unknown): boolean {
 
 function canTryNextModel(error: unknown): boolean {
   return isModelUnavailableError(error) || isQuotaOrRateLimitError(error);
+}
+
+function extractRetryAfterMs(message: string): number {
+  const retryInMatch = message.match(/retry in\s+([\d.]+)s/i);
+  if (retryInMatch?.[1]) {
+    const seconds = Number(retryInMatch[1]);
+    if (!Number.isNaN(seconds) && seconds > 0) {
+      return Math.ceil(seconds * 1000);
+    }
+  }
+
+  const retryDelayMatch = message.match(/retrydelay\":\"([\d.]+)s/i);
+  if (retryDelayMatch?.[1]) {
+    const seconds = Number(retryDelayMatch[1]);
+    if (!Number.isNaN(seconds) && seconds > 0) {
+      return Math.ceil(seconds * 1000);
+    }
+  }
+
+  return 0;
+}
+
+function isDailyModelQuotaError(message: string): boolean {
+  return /generaterequestsperdayperprojectpermodel/i.test(message);
+}
+
+function applyModelBackoff(modelName: string, error: unknown): void {
+  if (!(error instanceof Error)) {
+    return;
+  }
+
+  const rawMessage = error.message;
+  const retryAfterMs = extractRetryAfterMs(rawMessage);
+  const backoffMs = isDailyModelQuotaError(rawMessage)
+    ? Math.max(retryAfterMs, MODEL_BACKOFF_DAILY_QUOTA_MS)
+    : Math.max(retryAfterMs, MODEL_BACKOFF_DEFAULT_MS);
+
+  modelCooldownUntil.set(modelName, Date.now() + backoffMs);
+}
+
+function getCandidateModelsByAvailability(): string[] {
+  const now = Date.now();
+
+  return [...GEMINI_MODEL_CANDIDATES].sort((a, b) => {
+    const aReadyAt = modelCooldownUntil.get(a) ?? 0;
+    const bReadyAt = modelCooldownUntil.get(b) ?? 0;
+    const aIsReady = aReadyAt <= now ? 0 : 1;
+    const bIsReady = bReadyAt <= now ? 0 : 1;
+
+    if (aIsReady !== bIsReady) {
+      return aIsReady - bIsReady;
+    }
+
+    return aReadyAt - bReadyAt;
+  });
 }
 
 function getClassifyFallbackExplanation(error: unknown): string {
@@ -209,19 +268,32 @@ function parseGeminiJsonResponse(rawText: string): {
 async function generateWithGemini(prompt: string): Promise<string> {
   const genAI = await getGeminiClient();
   let lastError: unknown = null;
+  const now = Date.now();
+  let skippedDueToCooldown = 0;
 
-  for (const modelName of GEMINI_MODEL_CANDIDATES) {
+  for (const modelName of getCandidateModelsByAvailability()) {
+    const readyAt = modelCooldownUntil.get(modelName) ?? 0;
+    if (readyAt > now) {
+      skippedDueToCooldown += 1;
+      continue;
+    }
+
     try {
       const model = genAI.getGenerativeModel({ model: modelName });
       const result = await model.generateContent(prompt);
       return result.response.text();
     } catch (error) {
       lastError = error;
+      applyModelBackoff(modelName, error);
       if (canTryNextModel(error)) {
         continue;
       }
       throw error;
     }
+  }
+
+  if (lastError == null && skippedDueToCooldown > 0) {
+    throw new Error("All Gemini models are temporarily rate-limited. Please retry shortly.");
   }
 
   if (lastError instanceof Error) {
@@ -334,7 +406,9 @@ export async function classifyMessage(text: string): Promise<ScanResult> {
     } else {
       console.error("classifyMessage failed", error);
     }
-    return fallbackScanResult(text, getClassifyFallbackExplanation(error));
+
+    const reason = getClassifyFallbackExplanation(error);
+    throw new Error(`${reason} Please try again.`);
   }
 }
 

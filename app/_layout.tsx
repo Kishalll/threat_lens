@@ -5,13 +5,20 @@ import { useFonts } from "expo-font";
 import * as Linking from "expo-linking";
 import * as Notifications from "expo-notifications";
 import { useEffect } from "react";
-import { StyleSheet, View, Alert } from "react-native";
+import { Alert, Platform, StyleSheet, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { initDatabase } from "../src/services/storageService";
 import { registerBackgroundFetchTasks } from "../src/services/backgroundTasks";
-import { initializeNotificationInterceptor } from "../src/modules/notificationBridge";
+import {
+  getInitialSharedText,
+  initializeNotificationInterceptor,
+  isNotificationAccessGranted,
+  notificationEmitter,
+  openNotificationAccessSettings,
+} from "../src/modules/notificationBridge";
 import { requestNotificationPermissions } from "../src/services/notificationService";
+import { useBreachStore } from "../src/stores/breachStore";
 import { useScannerStore } from "../src/stores/scannerStore";
 
 const DEBUG = false;
@@ -25,39 +32,130 @@ export default function RootLayout() {
   const router = useRouter();
 
   useEffect(() => {
+    const handleNotificationTap = async (
+      response: Notifications.NotificationResponse | null
+    ) => {
+      if (!response) {
+        return;
+      }
+
+      const data = response.notification.request.content.data as Record<string, unknown> | undefined;
+      if (!data || typeof data.type !== "string") {
+        return;
+      }
+
+      if (data.type === "PASTE_FULL_NOTIFICATION_PROMPT") {
+        router.push("/scanner");
+        return;
+      }
+
+      if (data.type === "SCAN_RETRY_PROMPT") {
+        router.push("/scanner");
+        return;
+      }
+
+      if (data.type === "BREACH_ALERT") {
+        router.push("/(tabs)/breach");
+        return;
+      }
+
+      if (data.type !== "THREAT_ALERT") {
+        return;
+      }
+
+      const scanId = typeof data.scanId === "string" ? data.scanId : "";
+      if (scanId) {
+        router.push({ pathname: "/scan/result", params: { id: scanId } });
+        return;
+      }
+
+      const sourceText = typeof data.sourceText === "string" ? data.sourceText : "";
+      if (!sourceText.trim()) {
+        router.push("/scanner");
+        return;
+      }
+
+      try {
+        const result = await useScannerStore.getState().scanManualText(sourceText);
+        router.push({ pathname: "/scan/result", params: { id: result.id } });
+      } catch (error) {
+        const message =
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "Message analysis failed. Please try again.";
+        Alert.alert("Scan Failed", message);
+      }
+    };
+
+    const checkNotificationAccess = async () => {
+      if (Platform.OS !== "android") {
+        return;
+      }
+
+      const granted = await isNotificationAccessGranted();
+      if (granted) {
+        return;
+      }
+
+      Alert.alert(
+        "Enable Notification Access",
+        "ThreatLens needs Notification Access to scan incoming notifications automatically.",
+        [
+          { text: "Not now", style: "cancel" },
+          { text: "Open Settings", onPress: () => openNotificationAccessSettings() },
+        ]
+      );
+    };
+
     // 🔥 1. Ask notification permission
-    requestNotificationPermissions();
+    void requestNotificationPermissions();
 
     // 🔥 2. Background + interceptor (optional future use)
     void registerBackgroundFetchTasks();
     initializeNotificationInterceptor();
 
-    // 🔥 3. NOTIFICATION LISTENER (MAIN LOGIC)
-    const notificationSubscription =
-      Notifications.addNotificationReceivedListener(async (notification) => {
-        try {
-          const message = notification.request.content.body;
-
-          console.log("📩 Notification received:", message);
-
-          if (message && typeof message === "string") {
-            // 🔥 SCAN MESSAGE
-            await useScannerStore.getState().scanManualText(message);
-
-            console.log("✅ Scan triggered from notification");
-
-            // 🔥 OPTIONAL ALERT
-            Alert.alert("Scan Complete", "Message scanned for threats");
-
-            // 🔥 Navigate to result screen
-            router.push("/scan/result");
-          }
-        } catch (err) {
-          console.error("❌ Notification scan failed:", err);
-        }
+    // 🔥 3. Notification tap actions
+    const notificationResponseSubscription =
+      Notifications.addNotificationResponseReceivedListener((response) => {
+        void handleNotificationTap(response);
       });
 
+    void Notifications.getLastNotificationResponseAsync().then((response) => {
+      void handleNotificationTap(response);
+    });
+
+    void checkNotificationAccess();
+
+    const sharedTextSubscription = notificationEmitter?.addListener(
+      "SharedTextReceived",
+      (event: { text?: unknown }) => {
+        const text = typeof event?.text === "string" ? event.text : "";
+        if (text.trim().length > 0) {
+          void handleSharedText(text);
+        }
+      }
+    );
+
+    void getInitialSharedText().then((sharedText) => {
+      if (sharedText) {
+        void handleSharedText(sharedText);
+      }
+    });
+
     // 🔗 Deep link handler (your existing logic)
+    const handleSharedText = async (text: string) => {
+      try {
+        const result = await useScannerStore.getState().scanManualText(text);
+        router.push({ pathname: "/scan/result", params: { id: result.id } });
+      } catch (error) {
+        const message =
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "Message analysis failed. Please try again.";
+        Alert.alert("Scan Failed", message);
+      }
+    };
+
     const handleUrl = (url: string | null) => {
       if (url) {
         try {
@@ -67,10 +165,7 @@ export default function RootLayout() {
             parsed.queryParams?.["android.intent.extra.TEXT"];
 
           if (textAttr && typeof textAttr === "string") {
-            setTimeout(() => {
-              void useScannerStore.getState().scanManualText(textAttr);
-              router.push("/scan/result");
-            }, 500);
+            void handleSharedText(textAttr);
           }
         } catch (e) {}
       }
@@ -81,20 +176,33 @@ export default function RootLayout() {
       handleUrl(url)
     );
 
-    // 🗄️ Init DB
-    void initDatabase().catch((error: unknown) => {
-      const typedError =
-        error instanceof Error
-          ? error
-          : new Error("Database initialization failed");
+    // 🗄️ Init DB + hydrate persisted data
+    void (async () => {
+      try {
+        await initDatabase();
 
-      if (DEBUG) console.error("Root initDatabase failed", typedError);
-    });
+        const breachStore = useBreachStore.getState();
+        await breachStore.hydrateFromStorage();
+
+        const hydratedState = useBreachStore.getState();
+        if (hydratedState.credentials.length > 0) {
+          await hydratedState.runScan({ notifyOnNew: true });
+        }
+      } catch (error: unknown) {
+        const typedError =
+          error instanceof Error
+            ? error
+            : new Error("Database initialization failed");
+
+        if (DEBUG) console.error("Root initDatabase failed", typedError);
+      }
+    })();
 
     // 🧹 CLEANUP
     return () => {
       linkingSubscription.remove();
-      notificationSubscription.remove(); // 🔥 IMPORTANT
+      notificationResponseSubscription.remove();
+      sharedTextSubscription?.remove();
     };
   }, [router]);
 

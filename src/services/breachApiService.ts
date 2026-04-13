@@ -20,6 +20,13 @@ export type BreachApiItem = {
   source: "XposedOrNot" | "LeakCheck";
 };
 
+function toErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return fallback;
+}
+
 function isRateLimitError(error: unknown): error is AxiosError {
   return axios.isAxiosError(error) && error.response?.status === 429;
 }
@@ -213,12 +220,13 @@ export async function checkEmailWithXposedOrNot(email: string): Promise<BreachAp
     if (isRateLimitError(error)) {
       const cooldownMs = getRetryAfterMs(error, XPOSED_DEFAULT_COOLDOWN_MS);
       xposedRateLimitedUntil = Date.now() + cooldownMs;
-      console.warn(`XposedOrNot rate limited (429). Backing off for ${Math.ceil(cooldownMs / 1000)}s.`);
-      return [];
+      throw new Error(
+        `XposedOrNot is rate limited right now. Please retry in about ${Math.ceil(cooldownMs / 1000)}s.`
+      );
     }
 
     console.error("XposedOrNot API Error", error);
-    return [];
+    throw new Error("Unable to fetch breach data from XposedOrNot.");
   }
 }
 
@@ -254,8 +262,9 @@ export async function checkWithLeakCheck(identifier: string, inputType: "email" 
     if (isRateLimitError(error)) {
       const cooldownMs = getRetryAfterMs(error, LEAKCHECK_DEFAULT_COOLDOWN_MS);
       leakCheckRateLimitedUntil = Date.now() + cooldownMs;
-      console.warn(`LeakCheck rate limited (429). Backing off for ${Math.ceil(cooldownMs / 1000)}s.`);
-      return [];
+      throw new Error(
+        `LeakCheck is rate limited right now. Please retry in about ${Math.ceil(cooldownMs / 1000)}s.`
+      );
     }
 
     if (isNotFoundError(error)) {
@@ -263,7 +272,7 @@ export async function checkWithLeakCheck(identifier: string, inputType: "email" 
     }
 
     console.error("LeakCheck API Error", error);
-    return [];
+    throw new Error("Unable to fetch breach data from LeakCheck.");
   }
 }
 
@@ -277,7 +286,15 @@ export async function checkAllCredentials(emailOrUsernames: string[]): Promise<B
     const isEmail = item.includes("@");
     
     if (isEmail) {
-      const xoResults = await checkEmailWithXposedOrNot(item);
+      let xoResults: BreachApiItem[] = [];
+      let xoError: Error | null = null;
+
+      try {
+        xoResults = await checkEmailWithXposedOrNot(item);
+      } catch (error) {
+        xoError = new Error(toErrorMessage(error, "XposedOrNot lookup failed."));
+      }
+
       allBreaches.push(
         ...xoResults.map((breach) => ({
           ...breach,
@@ -289,7 +306,23 @@ export async function checkAllCredentials(emailOrUsernames: string[]): Promise<B
       );
 
       if (xoResults.length === 0) {
-        const leakResults = await checkWithLeakCheck(item, "email");
+        let leakResults: BreachApiItem[] = [];
+        let leakError: Error | null = null;
+
+        try {
+          leakResults = await checkWithLeakCheck(item, "email");
+        } catch (error) {
+          leakError = new Error(toErrorMessage(error, "LeakCheck lookup failed."));
+        }
+
+        if (leakError && xoError) {
+          throw new Error(`${xoError.message} ${leakError.message}`.trim());
+        }
+
+        if (leakError && !xoError) {
+          throw leakError;
+        }
+
         allBreaches.push(
           ...leakResults.map((breach) => ({
             ...breach,
@@ -321,5 +354,9 @@ export async function checkAllCredentials(emailOrUsernames: string[]): Promise<B
     if (!map.has(b.id)) map.set(b.id, b);
   }
 
-  return Array.from(map.values());
+  return Array.from(map.values()).sort((a, b) => {
+    const aTime = new Date(a.date).getTime();
+    const bTime = new Date(b.date).getTime();
+    return bTime - aTime;
+  });
 }

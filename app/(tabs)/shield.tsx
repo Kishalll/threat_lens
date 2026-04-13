@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { StyleSheet, View, Text, Pressable, Image, ActivityIndicator, Alert, TouchableOpacity } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
@@ -15,8 +15,13 @@ export default function ShieldScreen() {
   const [protectedImage, setProtectedImage] = useState<string | null>(null);
   const [step, setStep] = useState<ProcessStep>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const activeRequestController = useRef<AbortController | null>(null);
 
   const resetState = () => {
+    if (activeRequestController.current) {
+      activeRequestController.current.abort();
+      activeRequestController.current = null;
+    }
     setSelectedImage(null);
     setProtectedImage(null);
     setStep('idle');
@@ -80,10 +85,14 @@ export default function ShieldScreen() {
       console.log("Target URL:", endpointUrl);
       console.log("Base64 String Length:", base64Data.length, "characters (~", Math.round(base64Data.length * 0.75 / 1024 / 1024), "MB)");
 
+      const controller = new AbortController();
+      activeRequestController.current = controller;
+
       const response = await fetch(endpointUrl, {
         method: "POST",
         body: JSON.stringify(requestBody),
         headers,
+        signal: controller.signal,
       });
 
       // 🔍 DEBUG LOG 2: Did the server respond?
@@ -123,6 +132,10 @@ export default function ShieldScreen() {
         encoding: FileSystem.EncodingType.Base64,
       });
 
+      if (controller.signal.aborted) {
+        return;
+      }
+
       setProtectedImage(protectedUri);
 
       // Update Dashboard Metric
@@ -133,9 +146,14 @@ export default function ShieldScreen() {
 
       setStep('done');
     } catch (error: any) {
+      if (error?.name === "AbortError") {
+        return;
+      }
       console.error("=== FETCH FAILED ===", error.message);
       setErrorMessage(error.message || "An error occurred while securing the image.");
       setStep('error');
+    } finally {
+      activeRequestController.current = null;
     }
   };
 
