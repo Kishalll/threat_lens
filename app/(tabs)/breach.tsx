@@ -1,16 +1,20 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, View, Text, ScrollView, Pressable, TextInput, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import Feather from "@expo/vector-icons/Feather";
 import { useBreachStore } from "../../src/stores/breachStore";
 
 const ALL_FILTER = "__ALL__";
+const BREACH_PAGE_SIZE = 10;
+const AUTO_COLLAPSE_MS = 45_000;
 
 export default function BreachScreen() {
   const router = useRouter();
   const breachStore = useBreachStore();
   const [newEmail, setNewEmail] = useState("");
   const [selectedCredentialFilter, setSelectedCredentialFilter] = useState<string>(ALL_FILTER);
+  const [visibleCountByFilter, setVisibleCountByFilter] = useState<Record<string, number>>({});
+  const collapseTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const credentialFilters = useMemo(
     () => breachStore.credentials.map((cred) => cred.value),
@@ -34,6 +38,60 @@ export default function BreachScreen() {
       setSelectedCredentialFilter(ALL_FILTER);
     }
   }, [credentialFilters, selectedCredentialFilter]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(collapseTimersRef.current).forEach((timer) => clearTimeout(timer));
+      collapseTimersRef.current = {};
+    };
+  }, []);
+
+  const clearCollapseTimer = (filterKey: string) => {
+    const existing = collapseTimersRef.current[filterKey];
+    if (existing) {
+      clearTimeout(existing);
+      delete collapseTimersRef.current[filterKey];
+    }
+  };
+
+  const scheduleAutoCollapse = (filterKey: string) => {
+    clearCollapseTimer(filterKey);
+    collapseTimersRef.current[filterKey] = setTimeout(() => {
+      setVisibleCountByFilter((prev) => {
+        const current = prev[filterKey] ?? BREACH_PAGE_SIZE;
+        if (current <= BREACH_PAGE_SIZE) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          [filterKey]: BREACH_PAGE_SIZE,
+        };
+      });
+    }, AUTO_COLLAPSE_MS);
+  };
+
+  const activeFilterKey = selectedCredentialFilter;
+  const activeVisibleCount = visibleCountByFilter[activeFilterKey] ?? BREACH_PAGE_SIZE;
+  const visibleBreaches = useMemo(
+    () => filteredBreaches.slice(0, activeVisibleCount),
+    [filteredBreaches, activeVisibleCount]
+  );
+  const hiddenBreachesCount = Math.max(filteredBreaches.length - visibleBreaches.length, 0);
+
+  const handleViewMoreBreaches = () => {
+    setVisibleCountByFilter((prev) => {
+      const current = prev[activeFilterKey] ?? BREACH_PAGE_SIZE;
+      const next = Math.min(current + BREACH_PAGE_SIZE, filteredBreaches.length);
+
+      return {
+        ...prev,
+        [activeFilterKey]: next,
+      };
+    });
+
+    scheduleAutoCollapse(activeFilterKey);
+  };
 
   const handleAddCredential = () => {
     if (newEmail.trim().length > 3) {
@@ -140,7 +198,7 @@ export default function BreachScreen() {
             </Text>
           )
         ) : (
-          filteredBreaches.map((breach) => (
+          visibleBreaches.map((breach) => (
             <Pressable 
               key={breach.id} 
               style={styles.breachCard}
@@ -162,6 +220,22 @@ export default function BreachScreen() {
               <Text style={styles.tapToView}>Tap to view guidance ›</Text>
             </Pressable>
           ))
+        )}
+
+        {hiddenBreachesCount > 0 && (
+          <View style={styles.viewMoreContainer}>
+            <Text style={styles.remainingText}>
+              Showing {visibleBreaches.length} of {filteredBreaches.length} latest breaches
+            </Text>
+            <Pressable style={styles.viewMoreButton} onPress={handleViewMoreBreaches}>
+              <Text style={styles.viewMoreText}>
+                View 10 more ({hiddenBreachesCount} remaining)
+              </Text>
+            </Pressable>
+            <Text style={styles.autoCollapseHint}>
+              Expanded list auto-collapses to latest 10 after 45 seconds.
+            </Text>
+          </View>
         )}
         <View style={{height: 40}} />
       </ScrollView>
@@ -323,5 +397,41 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "bold",
     textAlign: "right",
-  }
+  },
+  viewMoreContainer: {
+    marginTop: 6,
+    marginBottom: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#2A2D35",
+    borderRadius: 10,
+    backgroundColor: "#121419",
+  },
+  remainingText: {
+    color: "#8B8F99",
+    fontFamily: "JetBrainsMono-Regular",
+    fontSize: 12,
+    marginBottom: 10,
+  },
+  viewMoreButton: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#4ADE80",
+    backgroundColor: "#4ADE801A",
+  },
+  viewMoreText: {
+    color: "#4ADE80",
+    fontFamily: "DMSans-Regular",
+    fontWeight: "bold",
+    fontSize: 13,
+  },
+  autoCollapseHint: {
+    color: "#8B8F99",
+    fontFamily: "DMSans-Regular",
+    fontSize: 11,
+    marginTop: 8,
+  },
 });

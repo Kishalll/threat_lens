@@ -219,21 +219,52 @@ function shouldSendRetryPrompt(): boolean {
   return true;
 }
 
-async function promptForFullMessage(packageName: string, title: string) {
+function buildCapturedPreview(text: string): { summary: string; capturedText: string } {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return {
+      summary: "No message preview was captured.",
+      capturedText: "",
+    };
+  }
+
+  const clipped = normalized.length > 120 ? `${normalized.slice(0, 120)}...` : normalized;
+  return {
+    summary: `Captured preview: \"${clipped}\"`,
+    capturedText: clipped,
+  };
+}
+
+async function promptForFullMessage(packageName: string, title: string, text: string) {
+  const preview = buildCapturedPreview(text);
   await sendLocalNotification(
     "Action Needed: Paste Full Message",
-    `ThreatLens could not read the full notification from ${title || packageName}. Tap to paste the complete text in Scanner.`,
+    `ThreatLens could not read the full notification from ${title || packageName}. ${preview.summary} Tap to paste the complete text in Scanner.`,
     {
       type: "PASTE_FULL_NOTIFICATION_PROMPT",
       sourcePackage: packageName,
       sourceTitle: title,
+      capturedPreview: preview.summary,
+      capturedText: preview.capturedText,
       threatlensInternal: true,
     }
   );
 }
 
 function hasReadableText(text: string): boolean {
-  return text.trim().length >= 10;
+  return text.trim().length > 0;
+}
+
+function isExpectedClassificationDegrade(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("unable to analyse message at this time") ||
+    normalized.includes("ai quota exceeded") ||
+    normalized.includes("temporarily rate-limited") ||
+    normalized.includes("rate-limited") ||
+    normalized.includes("invalid api key") ||
+    normalized.includes("flagged")
+  );
 }
 
 /**
@@ -264,12 +295,16 @@ export function initializeNotificationInterceptor() {
         return;
       }
 
-      if (isTruncated || !hasReadableText(text)) {
+      if (isTruncated) {
         if (!shouldPromptForTruncated(packageName)) {
           return;
         }
 
-        await promptForFullMessage(packageName, title);
+        await promptForFullMessage(packageName, title, text);
+        return;
+      }
+
+      if (!hasReadableText(text)) {
         return;
       }
 
@@ -298,12 +333,18 @@ export function initializeNotificationInterceptor() {
         }
       );
     } catch (error) {
-      console.error("Notification interception pipeline failed", error);
-
       const message =
         error instanceof Error && error.message.trim().length > 0
           ? error.message
           : "Automatic scan is temporarily unavailable.";
+
+      if (isExpectedClassificationDegrade(message)) {
+        const retryAfterMs = parseRetryAfterMs(message);
+        classificationPausedUntil = Date.now() + (retryAfterMs > 0 ? retryAfterMs : 30_000);
+        return;
+      }
+
+      console.error("Notification interception pipeline failed", error);
 
       const retryAfterMs = parseRetryAfterMs(message);
       if (retryAfterMs > 0) {

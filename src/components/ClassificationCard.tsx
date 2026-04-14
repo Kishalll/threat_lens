@@ -14,6 +14,7 @@ const CLASSIFICATION_COLORS: Record<ScanResult["classification"], string> = {
   SPAM: "#FBBF24",
   SCAM: "#F97316",
   PHISHING: "#F87171",
+  UNAVAILABLE: "#8B8F99",
 };
 
 const CLASSIFICATION_BACKGROUNDS: Record<ScanResult["classification"], string> = {
@@ -21,11 +22,16 @@ const CLASSIFICATION_BACKGROUNDS: Record<ScanResult["classification"], string> =
   SPAM: "rgba(251,191,36,0.10)",
   SCAM: "rgba(249,115,22,0.10)",
   PHISHING: "rgba(248,113,113,0.10)",
+  UNAVAILABLE: "rgba(139,143,153,0.12)",
 };
 
 function getClassificationIcon(
   classification: ScanResult["classification"]
-): "check-circle" | "alert-triangle" | "alert-octagon" {
+): "check-circle" | "alert-triangle" | "alert-octagon" | "slash" {
+  if (classification === "UNAVAILABLE") {
+    return "slash";
+  }
+
   if (classification === "SAFE") {
     return "check-circle";
   }

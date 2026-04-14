@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import "react-native-get-random-values";
+import { v4 as uuidv4 } from "uuid";
 import { BreachApiItem, checkAllCredentials } from "../services/breachApiService";
 import {
   getCachedBreaches,
@@ -93,7 +95,7 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
 
       const nextCredentials = [
         ...state.credentials,
-        { id: Math.random().toString(), value: normalized, type },
+        { id: uuidv4(), value: normalized, type },
       ];
 
       void replaceCredentials(toStoredCredentials(nextCredentials));

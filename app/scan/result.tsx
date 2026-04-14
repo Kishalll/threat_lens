@@ -23,9 +23,10 @@ export default function ScanResultScreen() {
     );
   }
 
+  const isUnavailable = record.classification === "UNAVAILABLE";
   const isDangerous = record.classification === "SCAM" || record.classification === "PHISHING";
-  const mainColor = isDangerous ? "#F87171" : record.classification === "SPAM" ? "#FBBF24" : "#4ADE80";
-  const iconName = isDangerous ? "alert-octagon" : record.classification === "SPAM" ? "info" : "shield";
+  const mainColor = isUnavailable ? "#8B8F99" : isDangerous ? "#F87171" : record.classification === "SPAM" ? "#FBBF24" : "#4ADE80";
+  const iconName = isUnavailable ? "slash" : isDangerous ? "alert-octagon" : record.classification === "SPAM" ? "info" : "shield";
 
   return (
     <ScrollView style={styles.container}>

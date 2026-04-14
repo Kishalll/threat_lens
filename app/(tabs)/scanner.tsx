@@ -1,14 +1,23 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { StyleSheet, View, Text, TextInput, Pressable, ScrollView, ActivityIndicator } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import Feather from "@expo/vector-icons/Feather";
 import { useScannerStore } from "../../src/stores/scannerStore";
 
 export default function ScannerScreen() {
   const router = useRouter();
+  const { prefill } = useLocalSearchParams<{ prefill?: string | string[] }>();
   const scannerStore = useScannerStore();
   const [textToScan, setTextToScan] = useState("");
   const [scanError, setScanError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const rawPrefill = Array.isArray(prefill) ? prefill[0] : prefill;
+    const normalizedPrefill = typeof rawPrefill === "string" ? rawPrefill.trim() : "";
+    if (normalizedPrefill.length > 0) {
+      setTextToScan(normalizedPrefill);
+    }
+  }, [prefill]);
 
   const handleScan = async () => {
     if (textToScan.trim().length === 0) return;
@@ -20,6 +29,10 @@ export default function ScannerScreen() {
       setTextToScan("");
       router.push({ pathname: "/scan/result", params: { id: result.id } });
     } catch (error) {
+      if (error instanceof Error && error.message === "Scan cancelled.") {
+        return;
+      }
+
       const message =
         error instanceof Error && error.message.trim().length > 0
           ? error.message
@@ -34,6 +47,7 @@ export default function ScannerScreen() {
       case "SPAM": return "#FBBF24";
       case "SCAM": return "#F87171";
       case "PHISHING": return "#F87171";
+      case "UNAVAILABLE": return "#8B8F99";
       default: return "#8B8F99";
     }
   };
@@ -44,6 +58,7 @@ export default function ScannerScreen() {
       case "SPAM": return "info";
       case "SCAM": return "alert-triangle";
       case "PHISHING": return "alert-octagon";
+      case "UNAVAILABLE": return "slash";
       default: return "help-circle";
     }
   };
@@ -74,6 +89,13 @@ export default function ScannerScreen() {
             <Text style={styles.scanButtonText}>Analyze Message</Text>
           )}
         </Pressable>
+
+        {scannerStore.isScanning ? (
+          <Pressable style={styles.cancelButton} onPress={scannerStore.cancelScan}>
+            <Feather name="x-circle" size={18} color="#EF4444" />
+            <Text style={styles.cancelButtonText}>Cancel Scan</Text>
+          </Pressable>
+        ) : null}
 
         {scanError ? <Text style={styles.errorText}>{scanError}</Text> : null}
       </View>
@@ -154,6 +176,24 @@ const styles = StyleSheet.create({
     color: "#0E0F11",
     fontFamily: "DMSans-Regular",
     fontSize: 16,
+    fontWeight: "bold",
+  },
+  cancelButton: {
+    marginTop: 10,
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "#EF4444",
+    borderRadius: 12,
+    padding: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  cancelButtonText: {
+    color: "#EF4444",
+    fontFamily: "DMSans-Regular",
+    fontSize: 15,
     fontWeight: "bold",
   },
   sectionTitle: {

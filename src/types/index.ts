@@ -19,7 +19,7 @@ export interface BreachRecord {
 export interface ScanResult {
   id: string;
   timestamp: number;
-  classification: "SAFE" | "SPAM" | "SCAM" | "PHISHING";
+  classification: "SAFE" | "SPAM" | "SCAM" | "PHISHING" | "UNAVAILABLE";
   confidence: number;
   messagePreview: string;
   redFlags: string[];

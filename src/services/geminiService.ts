@@ -5,9 +5,10 @@ import { getKey } from "./secureKeyService";
 import type { ScanResult } from "../types";
 
 const GEMINI_MODEL_CANDIDATES = [
+  "gemini-2.5-flash",
   "gemini-2.0-flash",
   "gemini-1.5-flash",
-  "gemini-2.5-flash",
+  "gemini-1.5-flash-8b",
 ];
 
 const MODEL_BACKOFF_DEFAULT_MS = 60_000;
@@ -92,6 +93,13 @@ function isQuotaOrRateLimitError(error: unknown): boolean {
     message.includes("429") ||
     message.includes("quota exceeded") ||
     message.includes("rate limit") ||
+    message.includes("rate-limited") ||
+    message.includes("temporarily rate-limited") ||
+    message.includes("high demand") ||
+    message.includes("overloaded") ||
+    message.includes("service unavailable") ||
+    message.includes("unavailable") ||
+    message.includes("503") ||
     message.includes("retry in")
   );
 }
@@ -308,11 +316,11 @@ function fallbackScanResult(text: string, explanation: string): ScanResult {
   return {
     id: uuidv4(),
     timestamp: Date.now(),
-    classification: "SAFE",
+    classification: "UNAVAILABLE",
     confidence: 0,
     messagePreview: text.slice(0, 100),
     redFlags: [],
-    suggestedActions: [],
+    suggestedActions: ["Retry in a few minutes once AI capacity is available."],
     explanation,
   };
 }
@@ -405,12 +413,12 @@ export async function classifyMessage(text: string): Promise<ScanResult> {
   } catch (error) {
     if (isCompromisedOrInvalidKeyError(error) || isQuotaOrRateLimitError(error) || isModelUnavailableError(error)) {
       console.warn("classifyMessage degraded", error);
+      const reason = getClassifyFallbackExplanation(error);
+      return fallbackScanResult(text, reason);
     } else {
       console.error("classifyMessage failed", error);
+      throw error;
     }
-
-    const reason = getClassifyFallbackExplanation(error);
-    throw new Error(`${reason} Please try again.`);
   }
 }
 

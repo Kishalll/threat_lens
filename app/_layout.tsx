@@ -19,7 +19,6 @@ import {
 } from "../src/modules/notificationBridge";
 import { requestNotificationPermissions } from "../src/services/notificationService";
 import { useBreachStore } from "../src/stores/breachStore";
-import { useScannerStore } from "../src/stores/scannerStore";
 
 const DEBUG = false;
 
@@ -45,12 +44,14 @@ export default function RootLayout() {
       }
 
       if (data.type === "PASTE_FULL_NOTIFICATION_PROMPT") {
-        router.push("/scanner");
+        const capturedText = typeof data.capturedText === "string" ? data.capturedText : "";
+        router.push({ pathname: "/scanner", params: capturedText ? { prefill: capturedText } : undefined });
         return;
       }
 
       if (data.type === "SCAN_RETRY_PROMPT") {
-        router.push("/scanner");
+        const sourceText = typeof data.sourceText === "string" ? data.sourceText : "";
+        router.push({ pathname: "/scanner", params: sourceText.trim() ? { prefill: sourceText } : undefined });
         return;
       }
 
@@ -75,16 +76,7 @@ export default function RootLayout() {
         return;
       }
 
-      try {
-        const result = await useScannerStore.getState().scanManualText(sourceText);
-        router.push({ pathname: "/scan/result", params: { id: result.id } });
-      } catch (error) {
-        const message =
-          error instanceof Error && error.message.trim().length > 0
-            ? error.message
-            : "Message analysis failed. Please try again.";
-        Alert.alert("Scan Failed", message);
-      }
+      router.push({ pathname: "/scanner", params: { prefill: sourceText } });
     };
 
     const checkNotificationAccess = async () => {
@@ -144,16 +136,12 @@ export default function RootLayout() {
 
     // 🔗 Deep link handler (your existing logic)
     const handleSharedText = async (text: string) => {
-      try {
-        const result = await useScannerStore.getState().scanManualText(text);
-        router.push({ pathname: "/scan/result", params: { id: result.id } });
-      } catch (error) {
-        const message =
-          error instanceof Error && error.message.trim().length > 0
-            ? error.message
-            : "Message analysis failed. Please try again.";
-        Alert.alert("Scan Failed", message);
+      const normalizedText = text.trim();
+      if (!normalizedText) {
+        return;
       }
+
+      router.push({ pathname: "/scanner", params: { prefill: normalizedText } });
     };
 
     const handleUrl = (url: string | null) => {

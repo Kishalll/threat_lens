@@ -4,6 +4,17 @@ import type { BreachApiItem } from "./breachApiService";
 // For SDK 51, expo-sqlite returns a synchronous DB context for standard executeSql 
 // or async via new APIs
 let db: SQLite.SQLiteDatabase | null = null;
+let credentialsWriteQueue: Promise<void> = Promise.resolve();
+
+function enqueueCredentialsWrite(task: () => Promise<void>): Promise<void> {
+  credentialsWriteQueue = credentialsWriteQueue
+    .catch(() => {
+      // Swallow previous write failures so future writes can proceed.
+    })
+    .then(task);
+
+  return credentialsWriteQueue;
+}
 
 export type StoredCredential = {
   id: string;
@@ -60,7 +71,10 @@ export async function initDatabase() {
 
 export async function insertCredential(id: string, value: string, type: string) {
   if (!db) return;
-  await db.runAsync('INSERT INTO credentials (id, value, type) VALUES (?, ?, ?)', [id, value, type]);
+  await enqueueCredentialsWrite(async () => {
+    if (!db) return;
+    await db.runAsync('INSERT OR REPLACE INTO credentials (id, value, type) VALUES (?, ?, ?)', [id, value, type]);
+  });
 }
 
 export async function getCredentials(): Promise<StoredCredential[]> {
@@ -89,13 +103,17 @@ export async function getCredentials(): Promise<StoredCredential[]> {
 export async function replaceCredentials(credentials: StoredCredential[]): Promise<void> {
   if (!db) return;
 
-  await db.runAsync("DELETE FROM credentials");
-  for (const credential of credentials) {
-    await db.runAsync(
-      "INSERT INTO credentials (id, value, type) VALUES (?, ?, ?)",
-      [credential.id, credential.value, credential.type]
-    );
-  }
+  await enqueueCredentialsWrite(async () => {
+    if (!db) return;
+
+    await db.runAsync("DELETE FROM credentials");
+    for (const credential of credentials) {
+      await db.runAsync(
+        "INSERT OR REPLACE INTO credentials (id, value, type) VALUES (?, ?, ?)",
+        [credential.id, credential.value, credential.type]
+      );
+    }
+  });
 }
 
 export async function getCachedBreaches(): Promise<BreachApiItem[]> {
