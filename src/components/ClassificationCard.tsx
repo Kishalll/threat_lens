@@ -10,19 +10,19 @@ type ClassificationCardProps = {
 };
 
 const CLASSIFICATION_COLORS: Record<ScanResult["classification"], string> = {
-  SAFE: "#4ADE80",
-  SPAM: "#FBBF24",
-  SCAM: "#F97316",
-  PHISHING: "#F87171",
-  UNAVAILABLE: "#8B8F99",
+  SAFE: "#83D0AE",
+  SPAM: "#D7AE78",
+  SCAM: "#DC8C8C",
+  PHISHING: "#DC8C8C",
+  UNAVAILABLE: "#768196",
 };
 
 const CLASSIFICATION_BACKGROUNDS: Record<ScanResult["classification"], string> = {
-  SAFE: "rgba(74,222,128,0.10)",
-  SPAM: "rgba(251,191,36,0.10)",
-  SCAM: "rgba(249,115,22,0.10)",
-  PHISHING: "rgba(248,113,113,0.10)",
-  UNAVAILABLE: "rgba(139,143,153,0.12)",
+  SAFE: "rgba(131,208,174,0.14)",
+  SPAM: "rgba(215,174,120,0.14)",
+  SCAM: "rgba(220,140,140,0.14)",
+  PHISHING: "rgba(220,140,140,0.14)",
+  UNAVAILABLE: "rgba(118,129,150,0.14)",
 };
 
 function getClassificationIcon(
@@ -107,9 +107,14 @@ export default function ClassificationCard({
 const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
-    borderRadius: THEME.borderRadius,
-    padding: 14,
+    borderRadius: THEME.radius.md,
+    padding: 16,
     gap: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 14,
+    elevation: 5,
   },
   headerRow: {
     flexDirection: "row",
@@ -125,7 +130,7 @@ const styles = StyleSheet.create({
     fontFamily: THEME.fontFamily.dmSans,
     fontSize: 16,
     fontWeight: "700",
-    letterSpacing: 0.4,
+    letterSpacing: 0.2,
   },
   confidenceText: {
     fontFamily: THEME.fontFamily.jetbrainsMono,
@@ -143,10 +148,10 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontFamily: THEME.fontFamily.dmSans,
-    fontSize: 14,
-    color: THEME.colors.textSecondary,
+    fontSize: 12,
+    color: THEME.colors.textTertiary,
     textTransform: "uppercase",
-    letterSpacing: 0.5,
+    letterSpacing: 1,
   },
   listText: {
     fontFamily: THEME.fontFamily.dmSans,

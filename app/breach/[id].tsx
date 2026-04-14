@@ -5,6 +5,7 @@ import Feather from "@expo/vector-icons/Feather";
 import { useBreachStore } from "../../src/stores/breachStore";
 import { generateBreachGuidance } from "../../src/services/geminiService";
 import { useDashboardStore } from "../../src/stores/dashboardStore";
+import { THEME } from "../../src/constants/theme";
 
 function parseGuidanceSuggestions(guidance: string): string[] {
   const lines = guidance
@@ -93,8 +94,8 @@ export default function BreachDetailScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      <Pressable style={styles.backHeader} onPress={() => router.back()}>
-        <Feather name="arrow-left" size={24} color="#E8E9EB" />
+      <Pressable style={({ pressed }) => [styles.backHeader, pressed && styles.pressedButton]} onPress={() => router.back()}>
+        <Feather name="arrow-left" size={22} color={THEME.colors.textPrimary} />
         <Text style={styles.backTitle}>Back</Text>
       </Pressable>
 
@@ -114,7 +115,7 @@ export default function BreachDetailScreen() {
         )}
         {!breach.resolved ? (
           <Pressable
-            style={styles.secureButton}
+            style={({ pressed }) => [styles.secureButton, pressed && styles.pressedButton]}
             onPress={() => breachStore.markBreachAsResolved(breach.id)}
           >
             <Text style={styles.secureButtonText}>Mark as Secured</Text>
@@ -179,78 +180,92 @@ export default function BreachDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0E0F11",
+    backgroundColor: THEME.colors.background,
     padding: 20,
-    paddingTop: 60,
+    paddingTop: 56,
   },
   backHeader: {
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 24,
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: THEME.radius.pill,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+    backgroundColor: THEME.colors.surface,
   },
   backTitle: {
-    color: "#E8E9EB",
-    fontSize: 18,
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.textPrimary,
+    fontSize: 15,
+    fontFamily: THEME.fontFamily.dmSans,
     marginLeft: 8,
+    fontWeight: "700",
   },
   headerCard: {
-    backgroundColor: "#16181C",
-    borderColor: "#F87171",
+    backgroundColor: THEME.colors.surface,
+    borderColor: `${THEME.colors.danger}88`,
     borderWidth: 1,
-    padding: 20,
-    borderRadius: 12,
+    padding: 22,
+    borderRadius: THEME.radius.lg,
     alignItems: "center",
     marginBottom: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.24,
+    shadowRadius: 18,
+    elevation: 7,
   },
   headerCardResolved: {
-    borderColor: "#4ADE80",
-    backgroundColor: "#4ADE8012",
+    borderColor: `${THEME.colors.accent}88`,
+    backgroundColor: `${THEME.colors.accent}14`,
   },
   title: {
-    color: "#E8E9EB",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.textPrimary,
+    fontFamily: THEME.fontFamily.dmSans,
     fontSize: 24,
-    fontWeight: "bold",
+    fontWeight: "700",
     textAlign: "center",
   },
   date: {
-    color: "#8B8F99",
-    fontFamily: "JetBrainsMono-Regular",
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.jetbrainsMono,
     fontSize: 14,
     marginTop: 8,
   },
   matchedCredential: {
-    color: "#E8E9EB",
-    fontFamily: "JetBrainsMono-Regular",
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.jetbrainsMono,
     fontSize: 12,
     marginTop: 10,
   },
   secureButton: {
-    borderColor: "#4ADE80",
+    borderColor: THEME.colors.accent,
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: THEME.radius.sm,
     paddingHorizontal: 12,
     paddingVertical: 8,
     marginTop: 12,
+    backgroundColor: `${THEME.colors.accent}22`,
   },
   secureButtonText: {
-    color: "#4ADE80",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.accent,
+    fontFamily: THEME.fontFamily.dmSans,
     fontSize: 13,
-    fontWeight: "bold",
+    fontWeight: "700",
   },
   securedLabel: {
-    color: "#4ADE80",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.accent,
+    fontFamily: THEME.fontFamily.dmSans,
     fontSize: 13,
     marginTop: 12,
   },
   sectionTitle: {
-    color: "#E8E9EB",
-    fontFamily: "DMSans-Regular",
-    fontSize: 18,
-    fontWeight: "bold",
+    color: THEME.colors.textPrimary,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: THEME.typography.h2,
+    fontWeight: "700",
     marginBottom: 12,
     marginTop: 12,
   },
@@ -261,91 +276,97 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   dataClassTag: {
-    backgroundColor: "#FBBF241A",
-    borderColor: "#FBBF24",
+    backgroundColor: `${THEME.colors.warning}20`,
+    borderColor: `${THEME.colors.warning}9A`,
     borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 16,
+    borderRadius: THEME.radius.pill,
   },
   dataClassText: {
-    color: "#FBBF24",
-    fontFamily: "JetBrainsMono-Regular",
+    color: THEME.colors.warning,
+    fontFamily: THEME.fontFamily.jetbrainsMono,
     fontSize: 12,
-    fontWeight: "bold",
+    fontWeight: "700",
   },
   body: {
-    color: "#E8E9EB",
-    fontFamily: "DMSans-Regular",
-    fontSize: 16,
-    lineHeight: 24,
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 15,
+    lineHeight: 23,
     marginBottom: 24,
   },
   guidanceCard: {
-    backgroundColor: "#16181C",
-    borderColor: "#4ADE80",
+    backgroundColor: THEME.colors.surface,
+    borderColor: THEME.colors.border,
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: THEME.radius.lg,
     padding: 16,
     minHeight: 100,
     justifyContent: "center",
     gap: 10,
   },
   guidanceText: {
-    color: "#E8E9EB",
-    fontFamily: "DMSans-Regular",
-    fontSize: 16,
-    lineHeight: 24,
+    color: THEME.colors.textPrimary,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 15,
+    lineHeight: 23,
   },
   suggestionRow: {
     borderWidth: 1,
-    borderColor: "#2A2D35",
-    backgroundColor: "#121419",
-    borderRadius: 10,
+    borderColor: THEME.colors.border,
+    backgroundColor: THEME.colors.surfaceMuted,
+    borderRadius: THEME.radius.md,
     padding: 12,
     gap: 10,
   },
   doneButton: {
     alignSelf: "flex-start",
     borderWidth: 1,
-    borderColor: "#4ADE80",
-    borderRadius: 8,
+    borderColor: THEME.colors.accent,
+    borderRadius: THEME.radius.sm,
     paddingHorizontal: 10,
     paddingVertical: 6,
+    backgroundColor: `${THEME.colors.accent}1F`,
   },
   doneButtonCompleted: {
-    borderColor: "#2A2D35",
-    backgroundColor: "#2A2D35",
+    borderColor: THEME.colors.border,
+    backgroundColor: THEME.colors.surfaceMuted,
   },
   doneButtonText: {
-    color: "#4ADE80",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.accent,
+    fontFamily: THEME.fontFamily.dmSans,
     fontSize: 12,
-    fontWeight: "bold",
+    fontWeight: "700",
   },
   doneButtonTextCompleted: {
-    color: "#8B8F99",
+    color: THEME.colors.textTertiary,
   },
   loadingContainer: {
     alignItems: "center",
     justifyContent: "center",
   },
   loadingText: {
-    color: "#4ADE80",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.accent,
+    fontFamily: THEME.fontFamily.dmSans,
     marginTop: 12,
   },
   errorText: {
-    color: "#F87171",
+    color: THEME.colors.danger,
     fontSize: 18,
     marginBottom: 20,
   },
   backButton: {
-    backgroundColor: "#2A2D35",
+    backgroundColor: THEME.colors.surface,
     padding: 12,
-    borderRadius: 8,
+    borderRadius: THEME.radius.sm,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
   },
   backButtonText: {
-    color: "#E8E9EB",
-  }
+    color: THEME.colors.textPrimary,
+  },
+  pressedButton: {
+    transform: [{ scale: 0.985 }],
+  },
 });

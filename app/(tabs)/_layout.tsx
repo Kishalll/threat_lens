@@ -1,6 +1,7 @@
 import Feather from "@expo/vector-icons/Feather";
 import { Tabs } from "expo-router";
 import { StyleSheet } from "react-native";
+import { THEME } from "../../src/constants/theme";
 
 export default function TabsLayout() {
   return (
@@ -8,8 +9,10 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: styles.tabBar,
-        tabBarActiveTintColor: "#4ADE80",
-        tabBarInactiveTintColor: "#8B8F99",
+        tabBarActiveTintColor: THEME.colors.accent,
+        tabBarInactiveTintColor: THEME.colors.textTertiary,
+        tabBarLabelStyle: styles.tabBarLabel,
+        tabBarItemStyle: styles.tabBarItem,
       }}
     >
       <Tabs.Screen
@@ -54,7 +57,29 @@ export default function TabsLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    backgroundColor: "#16181C",
-    borderTopColor: "#2A2D35",
+    position: "absolute",
+    left: 14,
+    right: 14,
+    bottom: 14,
+    height: 68,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderColor: THEME.colors.border,
+    borderRadius: THEME.radius.lg,
+    backgroundColor: THEME.colors.surfaceMuted,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 14,
+    elevation: 10,
+  },
+  tabBarLabel: {
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 11,
+    fontWeight: "600",
+    marginBottom: 3,
+  },
+  tabBarItem: {
+    borderRadius: THEME.radius.md,
   },
 });

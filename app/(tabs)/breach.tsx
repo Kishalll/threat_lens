@@ -3,6 +3,7 @@ import { StyleSheet, View, Text, ScrollView, Pressable, TextInput, ActivityIndic
 import { useRouter } from "expo-router";
 import Feather from "@expo/vector-icons/Feather";
 import { useBreachStore } from "../../src/stores/breachStore";
+import { THEME } from "../../src/constants/theme";
 
 const ALL_FILTER = "__ALL__";
 const BREACH_PAGE_SIZE = 10;
@@ -118,7 +119,7 @@ export default function BreachScreen() {
           autoCapitalize="none"
         />
         <Pressable style={styles.addButton} onPress={handleAddCredential}>
-          <Feather name="plus" size={24} color="#0E0F11" />
+          <Feather name="plus" size={22} color="#0A0F14" />
         </Pressable>
       </View>
 
@@ -144,9 +145,9 @@ export default function BreachScreen() {
           <Text style={styles.sectionTitle}>Detected Breaches</Text>
           <Pressable onPress={() => breachStore.runScan()}>
              {breachStore.isScanning ? (
-                <ActivityIndicator size="small" color="#4ADE80" />
+                 <ActivityIndicator size="small" color={THEME.colors.accent} />
              ) : (
-                <Feather name="refresh-cw" size={20} color="#4ADE80" />
+                 <Feather name="refresh-cw" size={20} color={THEME.colors.accent} />
              )}
           </Pressable>
         </View>
@@ -159,9 +160,10 @@ export default function BreachScreen() {
           >
             <Pressable
               onPress={() => setSelectedCredentialFilter(ALL_FILTER)}
-              style={[
+              style={({ pressed }) => [
                 styles.filterChip,
                 selectedCredentialFilter === ALL_FILTER && styles.filterChipActive,
+                pressed && styles.pressedButton,
               ]}
             >
               <Text
@@ -180,7 +182,7 @@ export default function BreachScreen() {
                 <Pressable
                   key={value}
                   onPress={() => setSelectedCredentialFilter(value)}
-                  style={[styles.filterChip, isActive && styles.filterChipActive]}
+                  style={({ pressed }) => [styles.filterChip, isActive && styles.filterChipActive, pressed && styles.pressedButton]}
                 >
                   <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
                     {value}
@@ -205,7 +207,7 @@ export default function BreachScreen() {
           visibleBreaches.map((breach) => (
             <Pressable 
               key={breach.id} 
-              style={[styles.breachCard, breach.resolved && styles.breachCardResolved]}
+              style={({ pressed }) => [styles.breachCard, breach.resolved && styles.breachCardResolved, pressed && styles.pressedButton]}
               onPress={() => router.push(`/breach/${breach.id}`)}
             >
               <View style={styles.breachHeader}>
@@ -228,7 +230,7 @@ export default function BreachScreen() {
               </Text>
               {!breach.resolved ? (
                 <Pressable
-                  style={styles.secureButton}
+                  style={({ pressed }) => [styles.secureButton, pressed && styles.pressedButton]}
                   onPress={(event) => {
                     event.stopPropagation();
                     handleMarkAsSecured(breach.id);
@@ -268,38 +270,43 @@ export default function BreachScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0E0F11",
+    backgroundColor: THEME.colors.background,
     padding: 20,
-    paddingTop: 60,
+    paddingTop: 56,
   },
   headerTitle: {
-    color: "#E8E9EB",
-    fontSize: 28,
-    fontFamily: "DMSans-Regular",
-    fontWeight: "bold",
-    marginBottom: 20,
+    color: THEME.colors.textPrimary,
+    fontSize: THEME.typography.h1,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontWeight: "700",
+    marginBottom: 18,
   },
   addSection: {
     flexDirection: "row",
     gap: 12,
-    marginBottom: 24,
+    marginBottom: 22,
   },
   input: {
     flex: 1,
-    backgroundColor: "#16181C",
+    backgroundColor: THEME.colors.surface,
     borderWidth: 1,
-    borderColor: "#2A2D35",
-    color: "#E8E9EB",
-    padding: 12,
-    borderRadius: 8,
-    fontFamily: "DMSans-Regular",
+    borderColor: THEME.colors.border,
+    color: THEME.colors.textPrimary,
+    padding: 14,
+    borderRadius: THEME.radius.md,
+    fontFamily: THEME.fontFamily.dmSans,
   },
   addButton: {
-    backgroundColor: "#4ADE80",
+    backgroundColor: THEME.colors.accent,
     width: 48,
-    borderRadius: 8,
+    borderRadius: THEME.radius.md,
     justifyContent: "center",
     alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    elevation: 4,
   },
   listContainer: {
     flex: 1,
@@ -309,15 +316,15 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 12,
-    paddingBottom: 8,
+    paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#2A2D35",
+    borderBottomColor: THEME.colors.border,
   },
   sectionTitle: {
-    color: "#E8E9EB",
-    fontSize: 18,
-    fontFamily: "DMSans-Regular",
-    fontWeight: "bold",
+    color: THEME.colors.textPrimary,
+    fontSize: THEME.typography.h2,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontWeight: "700",
   },
   filterRow: {
     flexDirection: "row",
@@ -326,67 +333,72 @@ const styles = StyleSheet.create({
   },
   filterChip: {
     borderWidth: 1,
-    borderColor: "#2A2D35",
-    backgroundColor: "#16181C",
-    borderRadius: 16,
+    borderColor: THEME.colors.border,
+    backgroundColor: THEME.colors.surface,
+    borderRadius: THEME.radius.pill,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   filterChipActive: {
-    borderColor: "#4ADE80",
-    backgroundColor: "#4ADE801A",
+    borderColor: `${THEME.colors.accent}88`,
+    backgroundColor: `${THEME.colors.accent}22`,
   },
   filterChipText: {
-    color: "#8B8F99",
-    fontFamily: "JetBrainsMono-Regular",
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.jetbrainsMono,
     fontSize: 12,
   },
   filterChipTextActive: {
-    color: "#4ADE80",
+    color: THEME.colors.accent,
   },
   credentialRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: "#16181C",
+    backgroundColor: THEME.colors.surface,
     padding: 12,
-    borderRadius: 8,
+    borderRadius: THEME.radius.md,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: "#2A2D35",
+    borderColor: THEME.colors.border,
   },
   credentialText: {
-    color: "#E8E9EB",
-    fontFamily: "JetBrainsMono-Regular",
+    color: THEME.colors.textPrimary,
+    fontFamily: THEME.fontFamily.jetbrainsMono,
     fontSize: 14,
   },
   emptyText: {
-    color: "#8B8F99",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.textTertiary,
+    fontFamily: THEME.fontFamily.dmSans,
     fontStyle: "italic",
     marginBottom: 16,
   },
   safeText: {
-    color: "#4ADE80",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.accent,
+    fontFamily: THEME.fontFamily.dmSans,
     marginTop: 8,
   },
   errorText: {
-    color: "#EF4444",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.danger,
+    fontFamily: THEME.fontFamily.dmSans,
     marginTop: 8,
   },
   breachCard: {
-    backgroundColor: "#16181C",
-    borderColor: "#F87171",
+    backgroundColor: THEME.colors.surface,
+    borderColor: `${THEME.colors.danger}88`,
     borderWidth: 1,
-    padding: 16,
-    borderRadius: 10,
+    padding: 18,
+    borderRadius: THEME.radius.md,
     marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.22,
+    shadowRadius: 15,
+    elevation: 5,
   },
   breachCardResolved: {
-    borderColor: "#4ADE80",
-    backgroundColor: "#4ADE8012",
+    borderColor: `${THEME.colors.accent}88`,
+    backgroundColor: `${THEME.colors.accent}14`,
   },
   breachHeader: {
     flexDirection: "row",
@@ -394,56 +406,57 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   breachName: {
-    color: "#E8E9EB",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.textPrimary,
+    fontFamily: THEME.fontFamily.dmSans,
     fontSize: 18,
-    fontWeight: "bold",
+    fontWeight: "700",
   },
   breachDate: {
-    color: "#8B8F99",
-    fontFamily: "JetBrainsMono-Regular",
+    color: THEME.colors.textTertiary,
+    fontFamily: THEME.fontFamily.jetbrainsMono,
     fontSize: 12,
     marginBottom: 4,
   },
   matchedCredentialText: {
-    color: "#E8E9EB",
-    fontFamily: "JetBrainsMono-Regular",
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.jetbrainsMono,
     fontSize: 12,
     marginBottom: 6,
   },
   breachDataTypes: {
-    color: "#FBBF24",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.warning,
+    fontFamily: THEME.fontFamily.dmSans,
     fontSize: 14,
     marginBottom: 8,
   },
   secureButton: {
     alignSelf: "flex-start",
-    borderColor: "#4ADE80",
+    borderColor: THEME.colors.accent,
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: THEME.radius.sm,
     paddingHorizontal: 10,
     paddingVertical: 6,
     marginBottom: 8,
+    backgroundColor: `${THEME.colors.accent}1A`,
   },
   secureButtonText: {
-    color: "#4ADE80",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.accent,
+    fontFamily: THEME.fontFamily.dmSans,
     fontSize: 12,
-    fontWeight: "bold",
+    fontWeight: "700",
   },
   securedLabel: {
-    color: "#4ADE80",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.accent,
+    fontFamily: THEME.fontFamily.dmSans,
     fontSize: 12,
-    fontWeight: "bold",
+    fontWeight: "700",
     marginBottom: 8,
   },
   tapToView: {
-    color: "#4ADE80",
-    fontFamily: "DMSans-Regular",
-    fontSize: 14,
-    fontWeight: "bold",
+    color: THEME.colors.accent,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 13,
+    fontWeight: "700",
     textAlign: "right",
   },
   viewMoreContainer: {
@@ -451,13 +464,13 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#2A2D35",
-    borderRadius: 10,
-    backgroundColor: "#121419",
+    borderColor: THEME.colors.border,
+    borderRadius: THEME.radius.md,
+    backgroundColor: THEME.colors.surface,
   },
   remainingText: {
-    color: "#8B8F99",
-    fontFamily: "JetBrainsMono-Regular",
+    color: THEME.colors.textTertiary,
+    fontFamily: THEME.fontFamily.jetbrainsMono,
     fontSize: 12,
     marginBottom: 10,
   },
@@ -465,21 +478,24 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 8,
+    borderRadius: THEME.radius.sm,
     borderWidth: 1,
-    borderColor: "#4ADE80",
-    backgroundColor: "#4ADE801A",
+    borderColor: THEME.colors.accent,
+    backgroundColor: `${THEME.colors.accent}22`,
   },
   viewMoreText: {
-    color: "#4ADE80",
-    fontFamily: "DMSans-Regular",
-    fontWeight: "bold",
+    color: THEME.colors.accent,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontWeight: "700",
     fontSize: 13,
   },
   autoCollapseHint: {
-    color: "#8B8F99",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.textTertiary,
+    fontFamily: THEME.fontFamily.dmSans,
     fontSize: 11,
     marginTop: 8,
+  },
+  pressedButton: {
+    transform: [{ scale: 0.985 }],
   },
 });

@@ -11,6 +11,7 @@ import { useRouter } from "expo-router";
 import { useDashboardStore } from "../../src/stores/dashboardStore";
 import SafetyScoreBar from "../../src/components/SafetyScoreBar";
 import FeatureSummaryCard from "../../src/components/FeatureSummaryCard";
+import { THEME } from "../../src/constants/theme";
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -50,6 +51,7 @@ export default function HomeScreen() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.header}>
         <Text style={styles.greeting}>Digital Safety Overview</Text>
+        <Text style={styles.subheading}>Action-driven security intelligence</Text>
       </View>
 
       <SafetyScoreBar score={safetyScore} />
@@ -98,23 +100,31 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0E0F11",
+    backgroundColor: THEME.colors.background,
   },
   content: {
     padding: 20,
-    paddingTop: 60,
+    paddingTop: 56,
+    paddingBottom: 96,
   },
   header: {
-    marginBottom: 10,
+    marginBottom: 4,
   },
   greeting: {
-    fontFamily: "DMSans-Regular",
-    fontSize: 24,
-    color: "#E8E9EB",
-    fontWeight: "bold",
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: THEME.typography.h1,
+    color: THEME.colors.textPrimary,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
+  subheading: {
+    marginTop: 4,
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 14,
   },
   cardsContainer: {
-    marginTop: 20,
-    gap: 0,
+    marginTop: 10,
+    gap: 4,
   },
 });

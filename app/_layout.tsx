@@ -19,6 +19,7 @@ import {
 } from "../src/modules/notificationBridge";
 import { requestNotificationPermissions } from "../src/services/notificationService";
 import { useBreachStore } from "../src/stores/breachStore";
+import { THEME } from "../src/constants/theme";
 
 const DEBUG = false;
 
@@ -219,9 +220,9 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0E0F11",
+    backgroundColor: THEME.colors.background,
   },
   stackContent: {
-    backgroundColor: "#0E0F11",
+    backgroundColor: THEME.colors.background,
   },
 });

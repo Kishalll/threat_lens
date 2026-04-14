@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { View, Text, StyleSheet, Animated } from "react-native";
 import { getScoreColor } from "../utils/scoreCalculator";
+import { THEME } from "../constants/theme";
 
 interface Props {
   score: number;
@@ -9,6 +10,7 @@ interface Props {
 export default function SafetyScoreBar({ score }: Props) {
   const animatedWidth = useRef(new Animated.Value(0)).current;
   const color = getScoreColor(score);
+  const label = score >= 80 ? "Stable" : score >= 50 ? "Needs Attention" : "At Risk";
 
   useEffect(() => {
     Animated.timing(animatedWidth, {
@@ -20,9 +22,13 @@ export default function SafetyScoreBar({ score }: Props) {
 
   return (
     <View style={styles.container}>
-      <View style={styles.headerRow}>
+      <View style={styles.scoreHero}>
         <Text style={styles.title}>Digital Safety Score</Text>
-        <Text style={[styles.scoreText, { color }]}>{score} / 100</Text>
+        <View style={styles.heroRow}>
+          <Text style={[styles.scoreText, { color }]}>{score}</Text>
+          <Text style={styles.outOfText}>/100</Text>
+        </View>
+        <Text style={[styles.scoreLabel, { color }]}>{label}</Text>
       </View>
       <View style={styles.barBackground}>
         <Animated.View
@@ -44,35 +50,67 @@ export default function SafetyScoreBar({ score }: Props) {
 
 const styles = StyleSheet.create({
   container: {
-    marginVertical: 16,
+    marginTop: 8,
+    marginBottom: 20,
     width: "100%",
+    borderRadius: THEME.radius.lg,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+    backgroundColor: THEME.colors.surface,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.28,
+    shadowRadius: 20,
+    elevation: 9,
   },
-  headerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  scoreHero: {
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 14,
   },
   title: {
-    color: "#E8E9EB",
-    fontFamily: "DMSans-Regular",
-    fontSize: 16,
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 13,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    marginBottom: 8,
+  },
+  heroRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 4,
   },
   scoreText: {
-    fontFamily: "JetBrainsMono-Regular",
-    fontSize: 18,
-    fontWeight: "bold",
+    fontFamily: THEME.fontFamily.jetbrainsMono,
+    fontSize: 42,
+    fontWeight: "700",
+    lineHeight: 46,
+  },
+  outOfText: {
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.jetbrainsMono,
+    fontSize: 17,
+    marginBottom: 4,
+  },
+  scoreLabel: {
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 13,
+    marginTop: 4,
+    fontWeight: "700",
   },
   barBackground: {
-    height: 12,
-    backgroundColor: "#16181C",
-    borderRadius: 6,
+    height: 10,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderRadius: 999,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#2A2D35",
+    borderColor: "rgba(255,255,255,0.12)",
   },
   barFill: {
     height: "100%",
-    borderRadius: 6,
+    borderRadius: 999,
   },
 });

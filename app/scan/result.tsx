@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import Feather from "@expo/vector-icons/Feather";
 import { useScannerStore } from "../../src/stores/scannerStore";
 import { useDashboardStore } from "../../src/stores/dashboardStore";
+import { THEME } from "../../src/constants/theme";
 
 export default function ScanResultScreen() {
   const { index, id } = useLocalSearchParams<{ index?: string; id?: string }>();
@@ -49,8 +50,8 @@ export default function ScanResultScreen() {
   const iconName = isUnavailable ? "slash" : isDangerous ? "alert-octagon" : record.classification === "SPAM" ? "info" : "shield";
   return (
     <ScrollView style={styles.container}>
-      <Pressable style={styles.backHeader} onPress={() => router.back()}>
-        <Feather name="arrow-left" size={24} color="#E8E9EB" />
+      <Pressable style={({ pressed }) => [styles.backHeader, pressed && styles.pressedButton]} onPress={() => router.back()}>
+        <Feather name="arrow-left" size={22} color={THEME.colors.textPrimary} />
         <Text style={styles.backTitle}>Back to Scanner</Text>
       </Pressable>
 
@@ -127,60 +128,73 @@ export default function ScanResultScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0E0F11",
+    backgroundColor: THEME.colors.background,
     padding: 20,
-    paddingTop: 60,
+    paddingTop: 56,
   },
   backHeader: {
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 24,
+    alignSelf: "flex-start",
+    backgroundColor: THEME.colors.surface,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+    borderRadius: THEME.radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   backTitle: {
-    color: "#E8E9EB",
-    fontSize: 18,
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.textPrimary,
+    fontSize: 15,
+    fontFamily: THEME.fontFamily.dmSans,
     marginLeft: 8,
+    fontWeight: "700",
   },
   headerCard: {
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: THEME.radius.lg,
     padding: 32,
     alignItems: "center",
     marginBottom: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.25,
+    shadowRadius: 18,
+    elevation: 7,
   },
   classificationTitle: {
-    color: "#E8E9EB",
-    fontFamily: "JetBrainsMono-Regular",
+    color: THEME.colors.textPrimary,
+    fontFamily: THEME.fontFamily.jetbrainsMono,
     fontSize: 32,
-    fontWeight: "bold",
+    fontWeight: "700",
     marginBottom: 8,
   },
   confidenceText: {
-    color: "#8B8F99",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.dmSans,
     fontSize: 16,
   },
   sectionTitle: {
-    color: "#E8E9EB",
-    fontSize: 18,
-    fontFamily: "DMSans-Regular",
-    fontWeight: "bold",
+    color: THEME.colors.textPrimary,
+    fontSize: THEME.typography.h2,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontWeight: "700",
     marginBottom: 12,
     marginTop: 8,
   },
   explanationText: {
-    color: "#8B8F99",
-    fontFamily: "DMSans-Regular",
-    fontSize: 16,
-    lineHeight: 24,
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 15,
+    lineHeight: 23,
     marginBottom: 24,
   },
   listContainer: {
-    backgroundColor: "#16181C",
+    backgroundColor: THEME.colors.surface,
     borderWidth: 1,
-    borderColor: "#2A2D35",
-    borderRadius: 12,
+    borderColor: THEME.colors.border,
+    borderRadius: THEME.radius.md,
     padding: 16,
     marginBottom: 24,
   },
@@ -191,43 +205,48 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   listText: {
-    color: "#E8E9EB",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.textPrimary,
+    fontFamily: THEME.fontFamily.dmSans,
     fontSize: 14,
     lineHeight: 20,
     flex: 1,
   },
   doneButton: {
     borderWidth: 1,
-    borderColor: "#4ADE80",
-    borderRadius: 8,
+    borderColor: THEME.colors.accent,
+    borderRadius: THEME.radius.sm,
     paddingHorizontal: 10,
     paddingVertical: 6,
+    backgroundColor: `${THEME.colors.accent}1F`,
   },
   doneButtonCompleted: {
-    borderColor: "#2A2D35",
-    backgroundColor: "#2A2D35",
+    borderColor: THEME.colors.border,
+    backgroundColor: THEME.colors.surfaceMuted,
   },
   doneButtonText: {
-    color: "#4ADE80",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.accent,
+    fontFamily: THEME.fontFamily.dmSans,
     fontSize: 12,
-    fontWeight: "bold",
+    fontWeight: "700",
   },
   doneButtonTextCompleted: {
-    color: "#8B8F99",
+    color: THEME.colors.textTertiary,
   },
   previewCard: {
-    backgroundColor: "#16181C",
+    backgroundColor: THEME.colors.surface,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: THEME.radius.md,
     borderWidth: 1,
-    borderColor: "#2A2D35",
+    borderColor: THEME.colors.border,
   },
   previewText: {
-    color: "#8B8F99",
-    fontFamily: "JetBrainsMono-Regular",
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.jetbrainsMono,
     fontSize: 12,
     lineHeight: 18,
   }
+  ,
+  pressedButton: {
+    transform: [{ scale: 0.985 }],
+  },
 });

@@ -3,6 +3,7 @@ import { StyleSheet, View, Text, TextInput, Pressable, ScrollView, ActivityIndic
 import { useLocalSearchParams, useRouter } from "expo-router";
 import Feather from "@expo/vector-icons/Feather";
 import { useScannerStore } from "../../src/stores/scannerStore";
+import { THEME } from "../../src/constants/theme";
 
 export default function ScannerScreen() {
   const router = useRouter();
@@ -43,12 +44,12 @@ export default function ScannerScreen() {
 
   const getStatusColor = (classification: string) => {
     switch (classification) {
-      case "SAFE": return "#4ADE80";
-      case "SPAM": return "#FBBF24";
-      case "SCAM": return "#F87171";
-      case "PHISHING": return "#F87171";
-      case "UNAVAILABLE": return "#8B8F99";
-      default: return "#8B8F99";
+      case "SAFE": return THEME.colors.accent;
+      case "SPAM": return THEME.colors.warning;
+      case "SCAM": return THEME.colors.danger;
+      case "PHISHING": return THEME.colors.danger;
+      case "UNAVAILABLE": return THEME.colors.textTertiary;
+      default: return THEME.colors.textTertiary;
     }
   };
 
@@ -79,7 +80,11 @@ export default function ScannerScreen() {
           textAlignVertical="top"
         />
         <Pressable 
-          style={[styles.scanButton, (textToScan.trim().length === 0 || scannerStore.isScanning) && styles.disabledButton]} 
+          style={({ pressed }) => [
+            styles.scanButton,
+            (textToScan.trim().length === 0 || scannerStore.isScanning) && styles.disabledButton,
+            pressed && styles.pressedButton,
+          ]}
           onPress={handleScan}
           disabled={textToScan.trim().length === 0 || scannerStore.isScanning}
         >
@@ -91,8 +96,8 @@ export default function ScannerScreen() {
         </Pressable>
 
         {scannerStore.isScanning ? (
-          <Pressable style={styles.cancelButton} onPress={scannerStore.cancelScan}>
-            <Feather name="x-circle" size={18} color="#EF4444" />
+          <Pressable style={({ pressed }) => [styles.cancelButton, pressed && styles.pressedButton]} onPress={scannerStore.cancelScan}>
+            <Feather name="x-circle" size={18} color={THEME.colors.danger} />
             <Text style={styles.cancelButtonText}>Cancel Scan</Text>
           </Pressable>
         ) : null}
@@ -111,7 +116,7 @@ export default function ScannerScreen() {
             return (
               <Pressable 
                 key={record.id} 
-                style={[styles.historyCard, index === 0 && { marginTop: 8 }]}
+                style={({ pressed }) => [styles.historyCard, index === 0 && { marginTop: 8 }, pressed && styles.pressedButton]}
                 onPress={() => router.push({ pathname: "/scan/result", params: { id: record.id } })}
               >
                 <View style={styles.historyHeader}>
@@ -137,53 +142,69 @@ export default function ScannerScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0E0F11",
+    backgroundColor: THEME.colors.background,
     padding: 20,
-    paddingTop: 60,
+    paddingTop: 56,
   },
   headerTitle: {
-    color: "#E8E9EB",
-    fontSize: 28,
-    fontFamily: "DMSans-Regular",
-    fontWeight: "bold",
-    marginBottom: 20,
+    color: THEME.colors.textPrimary,
+    fontSize: THEME.typography.h1,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontWeight: "700",
+    marginBottom: 18,
   },
   inputContainer: {
-    marginBottom: 24,
+    marginBottom: 22,
+    backgroundColor: THEME.colors.surface,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+    borderRadius: THEME.radius.lg,
+    padding: 14,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.24,
+    shadowRadius: 16,
+    elevation: 6,
   },
   textInput: {
-    backgroundColor: "#16181C",
-    borderColor: "#2A2D35",
+    backgroundColor: "rgba(10, 14, 22, 0.68)",
+    borderColor: THEME.colors.border,
     borderWidth: 1,
-    color: "#E8E9EB",
+    color: THEME.colors.textPrimary,
     padding: 16,
-    borderRadius: 12,
-    fontFamily: "DMSans-Regular",
-    fontSize: 16,
+    borderRadius: THEME.radius.md,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: THEME.typography.body,
     minHeight: 120,
     marginBottom: 16,
   },
   scanButton: {
-    backgroundColor: "#4ADE80",
+    backgroundColor: THEME.colors.accent,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: THEME.radius.md,
     alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 14,
+    elevation: 5,
   },
   disabledButton: {
-    backgroundColor: "#4ADE8080",
+    backgroundColor: "rgba(131,208,174,0.45)",
   },
   scanButtonText: {
-    color: "#0E0F11",
-    fontFamily: "DMSans-Regular",
-    fontSize: 16,
-    fontWeight: "bold",
+    color: "#0A0F14",
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: 0.2,
   },
   cancelButton: {
-    marginTop: 10,
+    marginTop: 12,
     backgroundColor: "transparent",
     borderWidth: 1,
-    borderColor: "#EF4444",
-    borderRadius: 12,
+    borderColor: THEME.colors.danger,
+    borderRadius: THEME.radius.md,
     padding: 12,
     alignItems: "center",
     justifyContent: "center",
@@ -191,29 +212,34 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cancelButtonText: {
-    color: "#EF4444",
-    fontFamily: "DMSans-Regular",
-    fontSize: 15,
-    fontWeight: "bold",
+    color: THEME.colors.danger,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 14,
+    fontWeight: "700",
   },
   sectionTitle: {
-    color: "#E8E9EB",
-    fontSize: 18,
-    fontFamily: "DMSans-Regular",
-    fontWeight: "bold",
+    color: THEME.colors.textPrimary,
+    fontSize: THEME.typography.h2,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontWeight: "700",
     marginBottom: 12,
   },
   historyList: {
     flex: 1,
   },
   historyCard: {
-    backgroundColor: "#16181C",
+    backgroundColor: THEME.colors.surface,
     borderWidth: 1,
-    borderColor: "#2A2D35",
-    borderRadius: 10,
+    borderColor: THEME.colors.border,
+    borderRadius: THEME.radius.md,
     padding: 16,
     marginBottom: 12,
-    flexDirection: "column"
+    flexDirection: "column",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 14,
+    elevation: 5,
   },
   historyHeader: {
     flexDirection: "row",
@@ -227,28 +253,32 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   historyClassification: {
-    fontFamily: "JetBrainsMono-Regular",
-    fontWeight: "bold",
+    fontFamily: THEME.fontFamily.jetbrainsMono,
+    fontWeight: "700",
     fontSize: 14,
   },
   timestamp: {
-    color: "#8B8F99",
-    fontFamily: "JetBrainsMono-Regular",
+    color: THEME.colors.textTertiary,
+    fontFamily: THEME.fontFamily.jetbrainsMono,
     fontSize: 10,
   },
   previewText: {
-    color: "#8B8F99",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.dmSans,
     fontSize: 14,
+    lineHeight: 21,
   },
   emptyText: {
-    color: "#8B8F99",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.textTertiary,
+    fontFamily: THEME.fontFamily.dmSans,
     fontStyle: "italic",
   },
   errorText: {
-    color: "#EF4444",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.danger,
+    fontFamily: THEME.fontFamily.dmSans,
     marginTop: 10,
+  },
+  pressedButton: {
+    transform: [{ scale: 0.985 }],
   },
 });

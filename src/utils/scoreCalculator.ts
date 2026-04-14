@@ -60,7 +60,7 @@ export function calculateSafetyScore(inputs: ScoreInputs): number {
 }
 
 export function getScoreColor(score: number): string {
-  if (score >= 80) return "#4ADE80"; // 🟢 Secure
-  if (score >= 50) return "#FBBF24"; // 🟡 Moderate Risk
-  return "#F87171"; // 🔴 At Risk
+  if (score >= 80) return "#83D0AE";
+  if (score >= 50) return "#D7AE78";
+  return "#DC8C8C";
 }

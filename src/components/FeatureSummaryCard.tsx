@@ -1,6 +1,7 @@
-import React from "react";
-import { View, Text, StyleSheet, Pressable } from "react-native";
+import React, { useEffect, useRef } from "react";
+import { View, Text, StyleSheet, Pressable, Animated } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
+import { THEME } from "../constants/theme";
 
 interface Props {
   title: string;
@@ -21,48 +22,84 @@ export default function FeatureSummaryCard({
   timestampText,
   badgeCount,
 }: Props) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(12)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 320,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 320,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [opacity, translateY]);
+
   return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.card,
-        {
-          backgroundColor: `${statusColor}1A`, // 10% opacity hex
-          borderColor: statusColor !== "#2A2D35" ? statusColor : "#2A2D35",
-          opacity: pressed ? 0.8 : 1,
-        },
-      ]}
-      onPress={onPress}
+    <Animated.View
+      style={{
+        opacity,
+        transform: [{ translateY }],
+      }}
     >
-      <View style={styles.header}>
-        <View style={styles.iconContainer}>
-          <Feather name={icon} size={20} color={statusColor} />
-          <Text style={styles.title}>{title}</Text>
-        </View>
-        <View style={styles.valueContainer}>
-          <Text style={styles.value}>{value}</Text>
-          {badgeCount !== undefined && badgeCount > 0 && (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{badgeCount}</Text>
+      <Pressable
+        style={({ pressed }) => [
+          styles.card,
+          {
+            borderColor:
+              statusColor !== "#2A2D35"
+                ? `${statusColor}66`
+                : THEME.colors.border,
+            transform: [{ scale: pressed ? 0.985 : 1 }],
+          },
+        ]}
+        onPress={onPress}
+      >
+        <View style={styles.header}>
+          <View style={styles.iconContainer}>
+            <View style={[styles.iconBadge, { backgroundColor: `${statusColor}20` }]}>
+              <Feather name={icon} size={16} color={statusColor} />
             </View>
-          )}
+            <Text style={styles.title}>{title}</Text>
+          </View>
+          <View style={styles.valueContainer}>
+            <Text style={styles.value}>{value}</Text>
+            {badgeCount !== undefined && badgeCount > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{badgeCount}</Text>
+              </View>
+            )}
+          </View>
         </View>
-      </View>
-      {timestampText && (
-        <View style={styles.footer}>
-          <Text style={styles.timestamp}>{timestampText}</Text>
-        </View>
-      )}
-    </Pressable>
+
+        {timestampText ? (
+          <View style={styles.footer}>
+            <Text style={styles.timestamp}>{timestampText}</Text>
+          </View>
+        ) : null}
+      </Pressable>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
-    borderRadius: 10,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: THEME.radius.md,
+    padding: 18,
+    marginBottom: 14,
     width: "100%",
+    backgroundColor: THEME.colors.surface,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.24,
+    shadowRadius: 18,
+    elevation: 7,
   },
   header: {
     flexDirection: "row",
@@ -72,12 +109,23 @@ const styles = StyleSheet.create({
   iconContainer: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 10,
+  },
+  iconBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: THEME.radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
   },
   title: {
-    color: "#E8E9EB",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.textPrimary,
+    fontFamily: THEME.fontFamily.dmSans,
     fontSize: 16,
+    fontWeight: "700",
+    letterSpacing: 0.2,
   },
   valueContainer: {
     flexDirection: "row",
@@ -85,31 +133,34 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   value: {
-    color: "#E8E9EB",
-    fontFamily: "JetBrainsMono-Regular",
+    color: THEME.colors.textPrimary,
+    fontFamily: THEME.fontFamily.jetbrainsMono,
     fontSize: 16,
   },
   badge: {
-    backgroundColor: "#F87171",
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
+    backgroundColor: THEME.colors.danger,
+    borderRadius: THEME.radius.pill,
+    minWidth: 22,
+    height: 22,
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 4,
+    paddingHorizontal: 6,
   },
   badgeText: {
-    color: "#0E0F11",
+    color: "#0A0A0A",
     fontSize: 12,
-    fontWeight: "bold",
-    fontFamily: "JetBrainsMono-Regular",
+    fontWeight: "700",
+    fontFamily: THEME.fontFamily.jetbrainsMono,
   },
   footer: {
     marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.08)",
+    paddingTop: 10,
   },
   timestamp: {
-    color: "#8B8F99",
+    color: THEME.colors.textTertiary,
     fontSize: 12,
-    fontFamily: "DMSans-Regular",
+    fontFamily: THEME.fontFamily.dmSans,
   },
 });

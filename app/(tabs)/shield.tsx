@@ -4,9 +4,10 @@ import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
 import * as FileSystem from "expo-file-system/legacy";
 import Feather from "@expo/vector-icons/Feather";
-
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useDashboardStore } from "../../src/stores/dashboardStore";
 import { getCloudFunctionApiKey, getCloudFunctionUrl } from "../../src/services/secureKeyService";
+import { THEME } from "../../src/constants/theme";
 
 type ProcessStep = 'idle' | 'picked' | 'protecting' | 'done' | 'error';
 
@@ -16,6 +17,7 @@ export default function ShieldScreen() {
   const [step, setStep] = useState<ProcessStep>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const activeRequestController = useRef<AbortController | null>(null);
+  const insets = useSafeAreaInsets();
 
   const resetState = () => {
     if (activeRequestController.current) {
@@ -222,10 +224,13 @@ export default function ShieldScreen() {
         </View>
       )}
 
-      <View style={styles.buttonsContainer}>
+      <View style={[
+        styles.buttonsContainer,
+        { paddingBottom: insets.bottom + 70 }
+      ]}>
         {/* Idle state - show select button */}
         {step === 'idle' && (
-          <Pressable style={styles.primaryButton} onPress={pickImage}>
+          <Pressable style={({ pressed }) => [styles.primaryButton, pressed && styles.pressedButton]} onPress={pickImage}>
             <Feather name="upload" size={20} color="#0E0F11" />
             <Text style={styles.primaryButtonText}>Select Photo</Text>
           </Pressable>
@@ -233,7 +238,7 @@ export default function ShieldScreen() {
 
         {/* Picked state - show protect button */}
         {step === 'picked' && (
-          <Pressable style={styles.primaryButton} onPress={processImage}>
+          <Pressable style={({ pressed }) => [styles.primaryButton, pressed && styles.pressedButton]} onPress={processImage}>
             <Feather name="shield" size={20} color="#0E0F11" />
             <Text style={styles.primaryButtonText}>Protect Image</Text>
           </Pressable>
@@ -241,7 +246,7 @@ export default function ShieldScreen() {
 
         {/* Processing state - show cancel button */}
         {step === 'protecting' && (
-          <Pressable style={styles.cancelButton} onPress={resetState}>
+          <Pressable style={({ pressed }) => [styles.cancelButton, pressed && styles.pressedButton]} onPress={resetState}>
             <Feather name="x-circle" size={20} color="#EF4444" />
             <Text style={styles.cancelButtonText}>Cancel Protection</Text>
           </Pressable>
@@ -249,7 +254,7 @@ export default function ShieldScreen() {
 
         {/* Done state - show download button */}
         {step === 'done' && (
-          <Pressable style={styles.secondaryButton} onPress={saveToGallery}>
+          <Pressable style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressedButton]} onPress={saveToGallery}>
             <Feather name="download" size={20} color="#E8E9EB" />
             <Text style={styles.secondaryButtonText}>Save to Gallery</Text>
           </Pressable>
@@ -263,7 +268,7 @@ export default function ShieldScreen() {
               <Text style={styles.primaryButtonText}>Select New Photo</Text>
             </Pressable>
             {selectedImage && (
-              <Pressable style={styles.secondaryButton} onPress={processImage}>
+              <Pressable style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressedButton]} onPress={processImage}>
                 <Feather name="shield" size={20} color="#E8E9EB" />
                 <Text style={styles.secondaryButtonText}>Try Again</Text>
               </Pressable>
@@ -278,21 +283,21 @@ export default function ShieldScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0E0F11",
+    backgroundColor: THEME.colors.background,
     padding: 20,
-    paddingTop: 60,
+    paddingTop: 56,
   },
   headerTitle: {
-    color: "#E8E9EB",
-    fontSize: 28,
-    fontFamily: "DMSans-Regular",
-    fontWeight: "bold",
+    color: THEME.colors.textPrimary,
+    fontSize: THEME.typography.h1,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontWeight: "700",
     marginBottom: 8,
   },
   subtitle: {
-    color: "#8B8F99",
+    color: THEME.colors.textSecondary,
     fontSize: 14,
-    fontFamily: "DMSans-Regular",
+    fontFamily: THEME.fontFamily.dmSans,
     marginBottom: 24,
     lineHeight: 20,
   },
@@ -303,49 +308,49 @@ const styles = StyleSheet.create({
   imageBox: {
     width: "100%",
     aspectRatio: 1,
-    borderRadius: 16,
+    borderRadius: THEME.radius.lg,
     borderWidth: 1,
-    borderColor: "#2A2D35",
+    borderColor: THEME.colors.border,
   },
   placeholderBox: {
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#16181C",
+    backgroundColor: THEME.colors.surface,
   },
   placeholderText: {
-    color: "#8B8F99",
+    color: THEME.colors.textTertiary,
     marginTop: 12,
-    fontFamily: "DMSans-Regular",
+    fontFamily: THEME.fontFamily.dmSans,
   },
   stepperContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#16181C",
+    backgroundColor: THEME.colors.surface,
     padding: 16,
-    borderRadius: 8,
+    borderRadius: THEME.radius.md,
     borderWidth: 1,
-    borderColor: "#2A2D35",
+    borderColor: THEME.colors.border,
     marginBottom: 24,
   },
   stepText: {
-    color: "#E8E9EB",
-    fontFamily: "DMSans-Regular",
+    color: THEME.colors.textPrimary,
+    fontFamily: THEME.fontFamily.dmSans,
     marginLeft: 12,
   },
   successContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#4ADE801A",
+    backgroundColor: `${THEME.colors.accent}20`,
     padding: 16,
-    borderRadius: 8,
+    borderRadius: THEME.radius.md,
     borderWidth: 1,
-    borderColor: "#4ADE80",
+    borderColor: `${THEME.colors.accent}92`,
     marginBottom: 24,
   },
   successText: {
-    color: "#4ADE80",
-    fontFamily: "DMSans-Regular",
-    fontWeight: "bold",
+    color: THEME.colors.accent,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontWeight: "700",
     marginLeft: 12,
   },
   buttonsContainer: {
@@ -354,42 +359,47 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   primaryButton: {
-    backgroundColor: "#4ADE80",
+    backgroundColor: THEME.colors.accent,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     padding: 16,
-    borderRadius: 12,
+    borderRadius: THEME.radius.md,
     gap: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.24,
+    shadowRadius: 14,
+    elevation: 5,
   },
   primaryButtonText: {
-    color: "#0E0F11",
+    color: "#0A0F14",
     fontSize: 16,
-    fontWeight: "bold",
-    fontFamily: "DMSans-Regular",
+    fontWeight: "700",
+    fontFamily: THEME.fontFamily.dmSans,
   },
   secondaryButton: {
-    backgroundColor: "transparent",
+    backgroundColor: THEME.colors.surface,
     borderWidth: 1,
-    borderColor: "#2A2D35",
+    borderColor: THEME.colors.border,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     padding: 16,
-    borderRadius: 12,
+    borderRadius: THEME.radius.md,
     gap: 8,
   },
   secondaryButtonText: {
-    color: "#E8E9EB",
+    color: THEME.colors.textPrimary,
     fontSize: 16,
-    fontWeight: "bold",
-    fontFamily: "DMSans-Regular",
+    fontWeight: "700",
+    fontFamily: THEME.fontFamily.dmSans,
   },
   clearButton: {
     position: "absolute",
     top: -8,
     right: -8,
-    backgroundColor: "#2A2D35",
+    backgroundColor: THEME.colors.surfaceMuted,
     borderRadius: 16,
     width: 32,
     height: 32,
@@ -400,35 +410,38 @@ const styles = StyleSheet.create({
   cancelButton: {
     backgroundColor: "transparent",
     borderWidth: 2,
-    borderColor: "#EF4444",
+    borderColor: THEME.colors.danger,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     padding: 16,
-    borderRadius: 12,
+    borderRadius: THEME.radius.md,
     gap: 8,
   },
   cancelButtonText: {
-    color: "#EF4444",
+    color: THEME.colors.danger,
     fontSize: 16,
-    fontWeight: "bold",
-    fontFamily: "DMSans-Regular",
+    fontWeight: "700",
+    fontFamily: THEME.fontFamily.dmSans,
   },
   errorContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#EF44441A",
+    backgroundColor: `${THEME.colors.danger}1F`,
     padding: 16,
-    borderRadius: 8,
+    borderRadius: THEME.radius.md,
     borderWidth: 1,
-    borderColor: "#EF4444",
+    borderColor: `${THEME.colors.danger}8F`,
     marginBottom: 24,
   },
   errorText: {
-    color: "#EF4444",
-    fontFamily: "DMSans-Regular",
-    fontWeight: "bold",
+    color: THEME.colors.danger,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontWeight: "700",
     marginLeft: 12,
     flex: 1,
-  }
+  },
+  pressedButton: {
+    transform: [{ scale: 0.985 }],
+  },
 });
