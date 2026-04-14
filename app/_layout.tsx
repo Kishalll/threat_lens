@@ -5,7 +5,7 @@ import { useFonts } from "expo-font";
 import * as Linking from "expo-linking";
 import * as Notifications from "expo-notifications";
 import { useEffect } from "react";
-import { Alert, Platform, StyleSheet, View } from "react-native";
+import { Alert, LogBox, Platform, StyleSheet, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { initDatabase } from "../src/services/storageService";
@@ -23,6 +23,10 @@ import { useBreachStore } from "../src/stores/breachStore";
 const DEBUG = false;
 
 export default function RootLayout() {
+  if (__DEV__) {
+    LogBox.ignoreLogs(["Unable to activate keep awake"]);
+  }
+
   const [fontsLoaded] = useFonts({
     "DMSans-Regular": DMSans_400Regular,
     "JetBrainsMono-Regular": JetBrainsMono_400Regular,
