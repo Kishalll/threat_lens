@@ -14,11 +14,16 @@ import FeatureSummaryCard from "../../src/components/FeatureSummaryCard";
 
 export default function HomeScreen() {
   const router = useRouter();
-  const dashboard = useDashboardStore();
+  const refreshScore = useDashboardStore((state) => state.refreshScore);
+  const safetyScore = useDashboardStore((state) => state.SafetyScore);
+  const activeBreachesCount = useDashboardStore((state) => state.activeBreachesCount);
+  const flaggedMessagesScanCount = useDashboardStore((state) => state.flaggedMessagesScanCount);
+  const protectedImagesCount = useDashboardStore((state) => state.protectedImagesCount);
+  const lastUpdateTimestamp = useDashboardStore((state) => state.lastUpdateTimestamp);
 
   useEffect(() => {
     // Refresh score if needed on mount
-    dashboard.refreshScore();
+    refreshScore();
 
     // Foreground app state listener simulation as per PRD
     const subscription = AppState.addEventListener(
@@ -26,7 +31,7 @@ export default function HomeScreen() {
       (nextAppState: AppStateStatus) => {
         if (nextAppState === "active") {
           // Trigger updates, background scans, etc.
-          dashboard.refreshScore();
+          refreshScore();
         }
       }
     );
@@ -34,7 +39,7 @@ export default function HomeScreen() {
     return () => {
       subscription.remove();
     };
-  }, []);
+  }, [refreshScore]);
 
   const timeAgo = (timestamp: number) => {
     const diff = Math.floor((Date.now() - timestamp) / 60000);
@@ -47,31 +52,31 @@ export default function HomeScreen() {
         <Text style={styles.greeting}>Digital Safety Overview</Text>
       </View>
 
-      <SafetyScoreBar score={dashboard.SafetyScore} />
+      <SafetyScoreBar score={safetyScore} />
 
       <View style={styles.cardsContainer}>
         <FeatureSummaryCard
           title="Data Breaches"
           value={
-            dashboard.activeBreachesCount === 0
+            activeBreachesCount === 0
               ? "All Clear"
-              : `${dashboard.activeBreachesCount} Found`
+              : `${activeBreachesCount} Found`
           }
           icon="shield-off"
           statusColor={
-            dashboard.activeBreachesCount === 0 ? "#4ADE80" : "#F87171"
+            activeBreachesCount === 0 ? "#4ADE80" : "#F87171"
           }
-          badgeCount={dashboard.activeBreachesCount}
-          timestampText={`Last checked: ${timeAgo(dashboard.lastUpdateTimestamp)}`}
+          badgeCount={activeBreachesCount}
+          timestampText={`Last checked: ${timeAgo(lastUpdateTimestamp)}`}
           onPress={() => router.push("/(tabs)/breach")}
         />
 
         <FeatureSummaryCard
           title="Message Safety"
-          value={`${dashboard.flaggedMessagesScanCount} Flagged`}
+          value={`${flaggedMessagesScanCount} Flagged`}
           icon="message-square"
           statusColor={
-            dashboard.flaggedMessagesScanCount === 0 ? "#4ADE80" : "#FBBF24"
+            flaggedMessagesScanCount === 0 ? "#4ADE80" : "#FBBF24"
           }
           timestampText={`Last 30 days`}
           onPress={() => router.push("/(tabs)/scanner")}
@@ -79,7 +84,7 @@ export default function HomeScreen() {
 
         <FeatureSummaryCard
           title="Image Shield"
-          value={`${dashboard.protectedImagesCount} Protected`}
+          value={`${protectedImagesCount} Protected`}
           icon="image"
           statusColor="#2A2D35" // Neutral outline
           timestampText={`Last 30 days`}

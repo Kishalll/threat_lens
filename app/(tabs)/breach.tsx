@@ -100,6 +100,10 @@ export default function BreachScreen() {
     }
   };
 
+  const handleMarkAsSecured = (id: string) => {
+    breachStore.markBreachAsResolved(id);
+  };
+
   return (
     <View style={styles.container}>
       <Text style={styles.headerTitle}>Data Breaches</Text>
@@ -201,11 +205,16 @@ export default function BreachScreen() {
           visibleBreaches.map((breach) => (
             <Pressable 
               key={breach.id} 
-              style={styles.breachCard}
+              style={[styles.breachCard, breach.resolved && styles.breachCardResolved]}
               onPress={() => router.push(`/breach/${breach.id}`)}
             >
               <View style={styles.breachHeader}>
-                <Feather name="alert-triangle" size={20} color="#F87171" style={{ marginRight: 8 }} />
+                <Feather
+                  name={breach.resolved ? "check-circle" : "alert-triangle"}
+                  size={20}
+                  color={breach.resolved ? "#4ADE80" : "#F87171"}
+                  style={{ marginRight: 8 }}
+                />
                 <Text style={styles.breachName}>{breach.name}</Text>
               </View>
               <Text style={styles.breachDate}>Date: {new Date(breach.date).toLocaleDateString()}</Text>
@@ -217,6 +226,19 @@ export default function BreachScreen() {
               <Text style={styles.breachDataTypes}>
                 Leaked: {breach.dataClasses.join(", ")}
               </Text>
+              {!breach.resolved ? (
+                <Pressable
+                  style={styles.secureButton}
+                  onPress={(event) => {
+                    event.stopPropagation();
+                    handleMarkAsSecured(breach.id);
+                  }}
+                >
+                  <Text style={styles.secureButtonText}>Mark as Secured</Text>
+                </Pressable>
+              ) : (
+                <Text style={styles.securedLabel}>Secured</Text>
+              )}
               <Text style={styles.tapToView}>Tap to view guidance ›</Text>
             </Pressable>
           ))
@@ -362,6 +384,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginBottom: 12,
   },
+  breachCardResolved: {
+    borderColor: "#4ADE80",
+    backgroundColor: "#4ADE8012",
+  },
   breachHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -389,6 +415,28 @@ const styles = StyleSheet.create({
     color: "#FBBF24",
     fontFamily: "DMSans-Regular",
     fontSize: 14,
+    marginBottom: 8,
+  },
+  secureButton: {
+    alignSelf: "flex-start",
+    borderColor: "#4ADE80",
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 8,
+  },
+  secureButtonText: {
+    color: "#4ADE80",
+    fontFamily: "DMSans-Regular",
+    fontSize: 12,
+    fontWeight: "bold",
+  },
+  securedLabel: {
+    color: "#4ADE80",
+    fontFamily: "DMSans-Regular",
+    fontSize: 12,
+    fontWeight: "bold",
     marginBottom: 8,
   },
   tapToView: {

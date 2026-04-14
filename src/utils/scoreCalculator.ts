@@ -1,52 +1,66 @@
 export interface ScoreInputs {
   activeBreachesCount: number;
-  totalMessagesScanCount: number;
-  flaggedMessagesScanCount: number;
+  totalMessagesScanCount: number; // kept for compatibility (not used)
+  flaggedMessagesScanCount: number; // kept for compatibility (not used)
   protectedImagesCount: number;
   totalSuggestions: number;
   actedSuggestions: number;
 }
 
+const BASE_SCORE = 100;
+
+// ✅ CAPPED BREACH PENALTY
+function getBreachPenalty(count: number): number {
+  if (count === 0) return 0;
+  if (count <= 2) return 10;
+  if (count <= 5) return 20;
+  if (count <= 10) return 30;
+  return 40; // max penalty
+}
+
+const MAX_SUGGESTION_BONUS = 20;
+const IMAGE_BONUS_PER_PROTECTION = 3;
+const MAX_IMAGE_BONUS = 15;
+
+function clampScore(value: number): number {
+  if (value < 0) return 0;
+  if (value > 100) return 100;
+  return value;
+}
+
 export function calculateSafetyScore(inputs: ScoreInputs): number {
-  let score = 0;
+  const activeBreachesCount = Math.max(0, inputs.activeBreachesCount);
 
-  // 1. Breach Status (40%)
-  // 0 breaches = 100 * 0.40 = 40 pts
-  // Each unresolved breach deducts 20 pts (so deducts 20*0.40 = 8 pts out of 40)
-  let breachScore = 100 - inputs.activeBreachesCount * 20;
-  if (breachScore < 0) breachScore = 0;
-  score += breachScore * 0.4;
+  const totalSuggestions = Math.max(0, inputs.totalSuggestions);
+  const actedSuggestions = Math.min(
+    Math.max(0, inputs.actedSuggestions),
+    totalSuggestions
+  );
 
-  // 2. Message Safety (30%)
-  // Ratio of safe vs total messages
-  let messageScore = 100;
-  if (inputs.totalMessagesScanCount > 0) {
-    const safeMessages =
-      inputs.totalMessagesScanCount - inputs.flaggedMessagesScanCount;
-    messageScore = (safeMessages / inputs.totalMessagesScanCount) * 100;
+  const protectedImagesCount = Math.max(0, inputs.protectedImagesCount);
+
+  // 🧠 Behavior-based scoring
+  let score = BASE_SCORE;
+
+  // 🔴 Breach penalty (CAPPED)
+  score -= getBreachPenalty(activeBreachesCount);
+
+  // 🟢 Suggestions bonus
+  if (totalSuggestions > 0) {
+    score += (actedSuggestions / totalSuggestions) * MAX_SUGGESTION_BONUS;
   }
-  score += messageScore * 0.3;
 
-  // 3. Image Protection Activity (20%)
-  // Max 100 at 5+ images -> 20 pts per image
-  let imageScore = inputs.protectedImagesCount * 20;
-  if (imageScore > 100) imageScore = 100;
-  score += imageScore * 0.2;
+  // 🟢 Image protection bonus
+  score += Math.min(
+    protectedImagesCount * IMAGE_BONUS_PER_PROTECTION,
+    MAX_IMAGE_BONUS
+  );
 
-  // 4. Suggestions Acted On (10%)
-  // % of Gemini suggestions acted on
-  let suggestionsScore = 100;
-  if (inputs.totalSuggestions > 0) {
-    suggestionsScore =
-      (inputs.actedSuggestions / inputs.totalSuggestions) * 100;
-  }
-  score += suggestionsScore * 0.1;
-
-  return Math.round(score);
+  return Math.round(clampScore(score));
 }
 
 export function getScoreColor(score: number): string {
-  if (score >= 80) return "#4ADE80"; // Green (Secure)
-  if (score >= 50) return "#FBBF24"; // Amber (Moderate Risk)
-  return "#F87171"; // Red (At Risk)
+  if (score >= 80) return "#4ADE80"; // 🟢 Secure
+  if (score >= 50) return "#FBBF24"; // 🟡 Moderate Risk
+  return "#F87171"; // 🔴 At Risk
 }

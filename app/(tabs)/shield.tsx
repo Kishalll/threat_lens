@@ -139,10 +139,7 @@ export default function ShieldScreen() {
       setProtectedImage(protectedUri);
 
       // Update Dashboard Metric
-      const dash = useDashboardStore.getState();
-      dash.updateDashboardData({
-        protectedImagesCount: dash.protectedImagesCount + 1,
-      });
+      useDashboardStore.getState().incrementProtectedImagesCount();
 
       setStep('done');
     } catch (error: any) {

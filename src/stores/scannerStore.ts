@@ -36,17 +36,17 @@ export const useScannerStore = create<ScannerState>()((set, get) => ({
 
       // Update Dashboard score metrics
       const dash = useDashboardStore.getState();
-      dash.updateDashboardData({
-        totalMessagesScanCount: dash.totalMessagesScanCount + 1,
-        flaggedMessagesScanCount: 
-          (
-            result.classification === "SPAM" ||
-            result.classification === "SCAM" ||
-            result.classification === "PHISHING"
-          ) 
-            ? dash.flaggedMessagesScanCount + 1 
-            : dash.flaggedMessagesScanCount
-      });
+      dash.updateDashboardData((state) => ({
+        totalMessagesScanCount: state.totalMessagesScanCount + 1,
+        flaggedMessagesScanCount:
+          result.classification === "SPAM" ||
+          result.classification === "SCAM" ||
+          result.classification === "PHISHING"
+            ? state.flaggedMessagesScanCount + 1
+            : state.flaggedMessagesScanCount,
+      }));
+
+      dash.registerSuggestions("scan", result.id, result.suggestedActions);
 
       return result;
     } catch (error) {

@@ -29,6 +29,7 @@ export interface BreachState {
   
   addCredential: (value: string, type: "email" | "username") => void;
   removeCredential: (id: string) => void;
+  markBreachAsResolved: (id: string) => void;
   runScan: (options?: { notifyOnNew?: boolean }) => Promise<void>;
   hydrateFromStorage: () => Promise<void>;
 }
@@ -73,6 +74,20 @@ function formatCredentialSummary(breaches: BreachApiItem[]): string {
   return `${values[0]}, ${values[1]}, and ${values.length - 2} more`;
 }
 
+function countActiveBreaches(breaches: BreachApiItem[]): number {
+  return breaches.filter((breach) => !breach.resolved).length;
+}
+
+function applyResolvedState(
+  breaches: BreachApiItem[],
+  resolvedById: Map<string, boolean>
+): BreachApiItem[] {
+  return breaches.map((breach) => ({
+    ...breach,
+    resolved: resolvedById.get(breach.id) ?? Boolean(breach.resolved),
+  }));
+}
+
 export const useBreachStore = create<BreachState>()((set, get) => ({
   credentials: [],
   breaches: [],
@@ -111,6 +126,8 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
   },
 
   removeCredential: (id) => {
+    let nextActiveBreachesCount = 0;
+
     set((state) => {
       const nextCredentials = state.credentials.filter((c) => c.id !== id);
       const allowedValues = new Set(nextCredentials.map((credential) => credential.value));
@@ -120,6 +137,8 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
         }
         return allowedValues.has(breach.matchedCredential);
       });
+
+      nextActiveBreachesCount = countActiveBreaches(nextBreaches);
 
       void replaceCredentials(toStoredCredentials(nextCredentials));
       void replaceCachedBreaches(nextBreaches);
@@ -131,8 +150,40 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
     });
 
     useDashboardStore.getState().updateDashboardData({
-      activeBreachesCount: get().breaches.length,
+      activeBreachesCount: nextActiveBreachesCount,
     });
+  },
+
+  markBreachAsResolved: (id) => {
+    let didUpdate = false;
+    let nextActiveBreachesCount = 0;
+
+    set((state) => {
+      const target = state.breaches.find((breach) => breach.id === id);
+      if (!target || target.resolved) {
+        return state;
+      }
+
+      didUpdate = true;
+      const breaches = state.breaches.map((breach) =>
+        breach.id === id ? { ...breach, resolved: true } : breach
+      );
+
+      nextActiveBreachesCount = countActiveBreaches(breaches);
+
+      void replaceCachedBreaches(breaches);
+
+      return {
+        ...state,
+        breaches,
+      };
+    });
+
+    if (didUpdate) {
+      useDashboardStore.getState().updateDashboardData({
+        activeBreachesCount: nextActiveBreachesCount,
+      });
+    }
   },
 
   hydrateFromStorage: async () => {
@@ -142,7 +193,10 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
         getCachedBreaches(),
       ]);
 
-      const sortedBreaches = sortBreachesNewestFirst(breaches);
+      const sortedBreaches = sortBreachesNewestFirst(breaches).map((breach) => ({
+        ...breach,
+        resolved: Boolean(breach.resolved),
+      }));
 
       set({
         credentials,
@@ -151,7 +205,7 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
       });
 
       useDashboardStore.getState().updateDashboardData({
-        activeBreachesCount: sortedBreaches.length,
+        activeBreachesCount: countActiveBreaches(sortedBreaches),
       });
     } catch (error) {
       console.error("Failed to hydrate breach data", error);
@@ -177,10 +231,16 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
     try {
       const previousBreaches = get().breaches;
       const previousIds = new Set(previousBreaches.map((breach) => breach.id));
+      const resolvedById = new Map(
+        previousBreaches.map((breach) => [breach.id, Boolean(breach.resolved)])
+      );
 
       const itemsToScan = get().credentials.map((c) => c.value);
       const results = await checkAllCredentials(itemsToScan);
-      const sortedResults = sortBreachesNewestFirst(results);
+      const sortedResults = applyResolvedState(
+        sortBreachesNewestFirst(results),
+        resolvedById
+      );
       const newBreaches = sortedResults.filter((breach) => !previousIds.has(breach.id));
       
       set({ 
@@ -195,7 +255,7 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
 
       // Update the dashboard store with the count
       useDashboardStore.getState().updateDashboardData({
-        activeBreachesCount: sortedResults.length
+        activeBreachesCount: countActiveBreaches(sortedResults)
       });
 
       if (notifyOnNew && newBreaches.length > 0) {
