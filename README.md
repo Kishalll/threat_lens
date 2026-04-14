@@ -18,7 +18,7 @@ This README is for a first-time contributor who just cloned the repo and wants t
 ## 1. Clone And Install
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/Kishalll/threat_lens.git
 cd threat_lens
 npm install
 ```
