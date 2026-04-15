@@ -10,6 +10,7 @@ export interface ScoreInputs {
   breachActionProgress?: {
     totalSuggestions: number;
     actedSuggestions: number;
+    resolvedBreachEquivalent?: number;
   };
 }
 
@@ -74,24 +75,21 @@ function calculateBreachImpact(inputs: ScoreInputs): number {
     return 0;
   }
 
-  const totalSuggestions = Math.max(
+  const resolvedBreachEquivalent = Math.max(
     0,
-    Math.floor(inputs.breachActionProgress?.totalSuggestions ?? 0)
+    inputs.breachActionProgress?.resolvedBreachEquivalent ?? 0
   );
-  if (totalSuggestions === 0) {
-    return basePenalty;
-  }
 
-  const actedSuggestions = Math.min(
-    Math.max(0, Math.floor(inputs.breachActionProgress?.actedSuggestions ?? 0)),
-    totalSuggestions
+  const recoveryRatio = Math.min(
+    1,
+    resolvedBreachEquivalent / activeBreachesCount
   );
-  const recoveryRatio = actedSuggestions / totalSuggestions;
 
   return basePenalty * (1 - recoveryRatio);
 }
 
 export function calculateSafetyScore(inputs: ScoreInputs): number {
+  const activeBreachesCount = Math.max(0, Math.floor(inputs.activeBreachesCount));
   const protectedImagesCount = Math.max(0, Math.floor(inputs.protectedImagesCount));
 
   let score = BASE_SCORE;
@@ -106,6 +104,10 @@ export function calculateSafetyScore(inputs: ScoreInputs): number {
     protectedImagesCount * IMAGE_BONUS_PER_PROTECTION,
     MAX_IMAGE_BONUS
   );
+
+  if (activeBreachesCount > 0) {
+    score = Math.min(score, 99);
+  }
 
   return Math.round(clampScore(score));
 }

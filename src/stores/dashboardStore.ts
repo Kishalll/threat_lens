@@ -55,14 +55,37 @@ function getScannedMessagesFromState(state: DashboardState): ScannedMessage[] {
 
 function getBreachActionProgressFromSuggestions(
   suggestions: TrackedSuggestion[]
-): { totalSuggestions: number; actedSuggestions: number } {
+): {
+  totalSuggestions: number;
+  actedSuggestions: number;
+  resolvedBreachEquivalent: number;
+} {
   const actionableSuggestions = suggestions.filter(
     (suggestion) => suggestion.source === "breach" && !suggestion.isFallback
   );
 
+  const perBreachTotals = new Map<string, { total: number; acted: number }>();
+  for (const suggestion of actionableSuggestions) {
+    const current = perBreachTotals.get(suggestion.sourceId) ?? { total: 0, acted: 0 };
+    current.total += 1;
+    if (suggestion.acted) {
+      current.acted += 1;
+    }
+    perBreachTotals.set(suggestion.sourceId, current);
+  }
+
+  let resolvedBreachEquivalent = 0;
+  for (const progress of perBreachTotals.values()) {
+    if (progress.total <= 0) {
+      continue;
+    }
+    resolvedBreachEquivalent += progress.acted / progress.total;
+  }
+
   return {
     totalSuggestions: actionableSuggestions.length,
     actedSuggestions: actionableSuggestions.filter((suggestion) => suggestion.acted).length,
+    resolvedBreachEquivalent,
   };
 }
 
