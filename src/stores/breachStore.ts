@@ -162,6 +162,19 @@ function parseStoredGuidance(
   return null;
 }
 
+function deriveResolvedOnHydration(breach: BreachApiItem): boolean {
+  const guidance = parseStoredGuidance(breach.geminiGuidance ?? undefined);
+
+  // Without persisted per-action completion state, be conservative on startup.
+  // A breach is considered resolved at hydration only when guidance exists and
+  // there are no required action items.
+  if (!guidance || guidance.isFallback) {
+    return false;
+  }
+
+  return guidance.actionItems.length === 0;
+}
+
 export const useBreachStore = create<BreachState>()((set, get) => ({
   credentials: [],
   breaches: [],
@@ -201,6 +214,7 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
 
   removeCredential: (id) => {
     let nextActiveBreachesCount = 0;
+    let nextBreachIds: string[] = [];
 
     set((state) => {
       const nextCredentials = state.credentials.filter((c) => c.id !== id);
@@ -213,6 +227,7 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
       });
 
       nextActiveBreachesCount = countActiveBreaches(nextBreaches);
+      nextBreachIds = nextBreaches.map((breach) => breach.id);
 
       persistCredentialsAsync(toStoredCredentials(nextCredentials));
       persistBreachCacheAsync(nextBreaches);
@@ -226,6 +241,7 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
     useDashboardStore.getState().updateDashboardData({
       activeBreachesCount: nextActiveBreachesCount,
     });
+    useDashboardStore.getState().pruneSuggestionsForSource("breach", nextBreachIds);
   },
 
   markBreachAsResolved: (id) => {
@@ -356,7 +372,7 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
 
       const sortedBreaches = sortBreachesNewestFirst(breaches).map((breach) => ({
         ...breach,
-        resolved: Boolean(breach.resolved),
+        resolved: deriveResolvedOnHydration(breach),
       }));
 
       set({
@@ -368,6 +384,9 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
       useDashboardStore.getState().updateDashboardData({
         activeBreachesCount: countActiveBreaches(sortedBreaches),
       });
+      useDashboardStore
+        .getState()
+        .pruneSuggestionsForSource("breach", sortedBreaches.map((breach) => breach.id));
     } catch (error) {
       console.error("Failed to hydrate breach data", error);
       set({ isHydrated: true });
@@ -388,6 +407,7 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
       useDashboardStore.getState().updateDashboardData({
         activeBreachesCount: 0,
       });
+      useDashboardStore.getState().pruneSuggestionsForSource("breach", []);
       return;
     }
 
@@ -423,6 +443,9 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
       useDashboardStore.getState().updateDashboardData({
         activeBreachesCount: countActiveBreaches(sortedResults)
       });
+      useDashboardStore
+        .getState()
+        .pruneSuggestionsForSource("breach", sortedResults.map((breach) => breach.id));
 
       if (notifyOnNew && newBreaches.length > 0) {
         const credentialSummary = formatCredentialSummary(newBreaches);
@@ -457,6 +480,7 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
       useDashboardStore.getState().updateDashboardData({
         activeBreachesCount: 0,
       });
+      useDashboardStore.getState().pruneSuggestionsForSource("breach", []);
     }
   }
 }));

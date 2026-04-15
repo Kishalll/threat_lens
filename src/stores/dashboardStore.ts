@@ -59,6 +59,7 @@ function getBreachActionProgressFromSuggestions(
   totalSuggestions: number;
   actedSuggestions: number;
   resolvedBreachEquivalent: number;
+  pendingBreachCount: number;
 } {
   const actionableSuggestions = suggestions.filter(
     (suggestion) => suggestion.source === "breach" && !suggestion.isFallback
@@ -75,17 +76,22 @@ function getBreachActionProgressFromSuggestions(
   }
 
   let resolvedBreachEquivalent = 0;
+  let pendingBreachCount = 0;
   for (const progress of perBreachTotals.values()) {
     if (progress.total <= 0) {
       continue;
     }
     resolvedBreachEquivalent += progress.acted / progress.total;
+    if (progress.acted < progress.total) {
+      pendingBreachCount += 1;
+    }
   }
 
   return {
     totalSuggestions: actionableSuggestions.length,
     actedSuggestions: actionableSuggestions.filter((suggestion) => suggestion.acted).length,
     resolvedBreachEquivalent,
+    pendingBreachCount,
   };
 }
 
@@ -131,6 +137,10 @@ export interface DashboardState {
     source: SuggestionSource,
     sourceId: string
   ) => TrackedSuggestion[];
+  pruneSuggestionsForSource: (
+    source: SuggestionSource,
+    allowedSourceIds: string[]
+  ) => void;
   refreshScore: () => void;
 }
 
@@ -363,6 +373,38 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     return get().suggestions.filter(
       (suggestion) => suggestion.source === source && suggestion.sourceId === sourceId
     );
+  },
+
+  pruneSuggestionsForSource: (source, allowedSourceIds) => {
+    set((state) => {
+      const allowedSet = new Set(allowedSourceIds);
+      const suggestions = state.suggestions.filter(
+        (suggestion) => suggestion.source !== source || allowedSet.has(suggestion.sourceId)
+      );
+
+      if (suggestions.length === state.suggestions.length) {
+        return state;
+      }
+
+      const scannedMessages = getScannedMessagesFromState({
+        ...state,
+        suggestions,
+      });
+      const score = calculateScoreFromState({
+        ...state,
+        suggestions,
+        scannedMessages,
+      });
+
+      return {
+        ...state,
+        suggestions,
+        scannedMessages,
+        lastUpdateTimestamp: Date.now(),
+        SafetyScore: score,
+        ScoreColor: getScoreColor(score),
+      };
+    });
   },
 
   refreshScore: () => {

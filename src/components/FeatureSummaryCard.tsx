@@ -11,6 +11,7 @@ interface Props {
   onPress: () => void;
   timestampText?: string;
   badgeCount?: number;
+  pendingTagText?: string;
 }
 
 export default function FeatureSummaryCard({
@@ -21,6 +22,7 @@ export default function FeatureSummaryCard({
   onPress,
   timestampText,
   badgeCount,
+  pendingTagText,
 }: Props) {
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(12)).current;
@@ -80,6 +82,11 @@ export default function FeatureSummaryCard({
         {timestampText ? (
           <View style={styles.footer}>
             <Text style={styles.timestamp}>{timestampText}</Text>
+            {pendingTagText ? (
+              <View style={styles.pendingTag}>
+                <Text style={styles.pendingTagText}>{pendingTagText}</Text>
+              </View>
+            ) : null}
           </View>
         ) : null}
       </Pressable>
@@ -157,10 +164,27 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: "rgba(255,255,255,0.08)",
     paddingTop: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   timestamp: {
     color: THEME.colors.textTertiary,
     fontSize: 12,
+    fontFamily: THEME.fontFamily.dmSans,
+  },
+  pendingTag: {
+    borderWidth: 1,
+    borderColor: `${THEME.colors.warning}99`,
+    backgroundColor: `${THEME.colors.warning}22`,
+    borderRadius: THEME.radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  pendingTagText: {
+    color: THEME.colors.warning,
+    fontSize: 11,
+    fontWeight: "700",
     fontFamily: THEME.fontFamily.dmSans,
   },
 });

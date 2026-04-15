@@ -20,10 +20,43 @@ export default function HomeScreen() {
   const activeBreachesCount = useDashboardStore((state) => state.activeBreachesCount);
   const scannedMessages = useDashboardStore((state) => state.scannedMessages);
   const protectedImagesCount = useDashboardStore((state) => state.protectedImagesCount);
+  const suggestions = useDashboardStore((state) => state.suggestions);
   const lastUpdateTimestamp = useDashboardStore((state) => state.lastUpdateTimestamp);
   const flaggedMessagesScanCount = useMemo(
     () => scannedMessages.filter((message) => message.riskType !== "SAFE").length,
     [scannedMessages]
+  );
+  const pendingBreachActionsCount = useMemo(
+    () =>
+      suggestions.filter(
+        (suggestion) =>
+          suggestion.source === "breach" && !suggestion.isFallback && !suggestion.acted
+      ).length,
+    [suggestions]
+  );
+  const pendingBreachSourcesCount = useMemo(
+    () =>
+      new Set(
+        suggestions
+          .filter(
+            (suggestion) =>
+              suggestion.source === "breach" && !suggestion.isFallback && !suggestion.acted
+          )
+          .map((suggestion) => suggestion.sourceId)
+      ).size,
+    [suggestions]
+  );
+  const effectiveActiveBreachesCount = Math.max(
+    activeBreachesCount,
+    pendingBreachSourcesCount
+  );
+  const pendingScannerActionsCount = useMemo(
+    () =>
+      suggestions.filter(
+        (suggestion) =>
+          suggestion.source === "scan" && !suggestion.isFallback && !suggestion.acted
+      ).length,
+    [suggestions]
   );
 
   useEffect(() => {
@@ -51,6 +84,9 @@ export default function HomeScreen() {
     return diff < 1 ? "Just now" : `${diff} min ago`;
   };
 
+  const formatPendingTagText = (count: number) =>
+    `${count} ${count === 1 ? "Action" : "Actions"} Pending`;
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.header}>
@@ -66,16 +102,21 @@ export default function HomeScreen() {
         <FeatureSummaryCard
           title="Data Breaches"
           value={
-            activeBreachesCount === 0
+            effectiveActiveBreachesCount === 0
               ? "All Clear"
-              : `${activeBreachesCount} Found`
+              : `${effectiveActiveBreachesCount} Found`
           }
           icon="shield-off"
           statusColor={
-            activeBreachesCount === 0 ? "#4ADE80" : "#F87171"
+            effectiveActiveBreachesCount === 0 ? "#4ADE80" : "#F87171"
           }
-          badgeCount={activeBreachesCount}
+          badgeCount={effectiveActiveBreachesCount}
           timestampText={`Last checked: ${timeAgo(lastUpdateTimestamp)}`}
+          pendingTagText={
+            pendingBreachActionsCount > 0
+              ? formatPendingTagText(pendingBreachActionsCount)
+              : undefined
+          }
           onPress={() => router.push("/(tabs)/breach")}
         />
 
@@ -87,6 +128,11 @@ export default function HomeScreen() {
             flaggedMessagesScanCount === 0 ? "#4ADE80" : "#FBBF24"
           }
           timestampText={`Last 30 days`}
+          pendingTagText={
+            pendingScannerActionsCount > 0
+              ? formatPendingTagText(pendingScannerActionsCount)
+              : undefined
+          }
           onPress={() => router.push("/(tabs)/scanner")}
         />
 
