@@ -6,6 +6,33 @@ import { useBreachStore } from "../../src/stores/breachStore";
 import { useDashboardStore } from "../../src/stores/dashboardStore";
 import { THEME } from "../../src/constants/theme";
 
+function parseStoredGuidance(value?: string): { actionItems: string[]; isFallback: boolean } | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      Array.isArray((parsed as { actionItems?: unknown }).actionItems)
+    ) {
+      return {
+        actionItems: (parsed as { actionItems: unknown[] }).actionItems.filter(
+          (item): item is string => typeof item === "string" && item.trim().length > 0
+        ),
+        isFallback: Boolean((parsed as { isFallback?: unknown }).isFallback),
+      };
+    }
+  } catch {
+    // Legacy non-JSON guidance strings imply no structured action items.
+    return { actionItems: [], isFallback: false };
+  }
+
+  return null;
+}
+
 const ALL_FILTER = "__ALL__";
 const BREACH_PAGE_SIZE = 10;
 const AUTO_COLLAPSE_MS = 45_000;
@@ -38,12 +65,12 @@ function validateCredentialInput(value: string): string | null {
 }
 
 function buildProgress(
-  actedSuggestions: number,
-  totalSuggestions: number,
+  actedSuggestionsRaw: number,
+  totalSuggestionsRaw: number,
   hasGuidance: boolean
 ): BreachActionProgress {
-  const total = Math.max(0, totalSuggestions);
-  const acted = Math.min(Math.max(0, actedSuggestions), total);
+  const total = Math.max(0, totalSuggestionsRaw);
+  const acted = Math.min(Math.max(0, actedSuggestionsRaw), total);
   const isSecured = hasGuidance && (total === 0 || acted === total);
   const ratio = total === 0 ? (isSecured ? 1 : 0) : acted / total;
 
@@ -61,9 +88,6 @@ export default function BreachScreen() {
   const breachStore = useBreachStore();
   const suggestions = useDashboardStore((state) => state.suggestions);
   const getSuggestionsForSource = useDashboardStore((state) => state.getSuggestionsForSource);
-  const syncBreachResolutionFromSuggestions = useBreachStore(
-    (state) => state.syncBreachResolutionFromSuggestions
-  );
   const [newEmail, setNewEmail] = useState("");
   const [inputError, setInputError] = useState<string | null>(null);
   const [selectedCredentialFilter, setSelectedCredentialFilter] = useState<string>(ALL_FILTER);
@@ -137,54 +161,25 @@ export default function BreachScreen() {
     const progressById: Record<string, BreachActionProgress> = {};
 
     for (const breach of breachStore.breaches) {
+      const storedGuidance = parseStoredGuidance(breach.geminiGuidance);
+      const hasGuidance = Boolean(storedGuidance);
+      const requiredActionsCount =
+        storedGuidance && !storedGuidance.isFallback ? storedGuidance.actionItems.length : 0;
+
       const breachSuggestions = getSuggestionsForSource("breach", breach.id);
       const actionableSuggestions = breachSuggestions.filter(
         (suggestion) => !suggestion.isFallback
       );
-      const hasGuidance =
-        typeof breach.geminiGuidance === "string" && breach.geminiGuidance.trim().length > 0;
 
       progressById[breach.id] = buildProgress(
         actionableSuggestions.filter((suggestion) => suggestion.acted).length,
-        actionableSuggestions.length,
+        hasGuidance ? requiredActionsCount : 0,
         hasGuidance
       );
     }
 
     return progressById;
   }, [breachStore.breaches, getSuggestionsForSource, suggestions]);
-
-  const resolutionDiffById = useMemo(() => {
-    if (breachStore.breaches.length === 0) {
-      return null;
-    }
-
-    const diff: Record<string, boolean> = {};
-    let hasDiff = false;
-
-    for (const breach of breachStore.breaches) {
-      const progress = breachProgressById[breach.id];
-      if (!progress || !progress.hasGuidance) {
-        continue;
-      }
-
-      const nextResolved = progress.isSecured;
-      if (Boolean(breach.resolved) !== nextResolved) {
-        diff[breach.id] = nextResolved;
-        hasDiff = true;
-      }
-    }
-
-    return hasDiff ? diff : null;
-  }, [breachStore.breaches, breachProgressById]);
-
-  useEffect(() => {
-    if (!resolutionDiffById) {
-      return;
-    }
-
-    syncBreachResolutionFromSuggestions(resolutionDiffById);
-  }, [resolutionDiffById, syncBreachResolutionFromSuggestions]);
 
   const handleViewMoreBreaches = () => {
     setVisibleCountByFilter((prev) => {
@@ -372,8 +367,11 @@ export default function BreachScreen() {
                 />
               </View>
               <Text style={styles.progressText}>
-                {(breachProgressById[breach.id]?.actedSuggestions ?? 0)} of {" "}
-                {(breachProgressById[breach.id]?.totalSuggestions ?? 0)} actions completed
+                {breachProgressById[breach.id]?.hasGuidance
+                  ? `${breachProgressById[breach.id]?.actedSuggestions ?? 0} of ${
+                      breachProgressById[breach.id]?.totalSuggestions ?? 0
+                    } actions completed`
+                  : "AI action plan pending"}
               </Text>
               <Text style={styles.tapToView}>Tap to view guidance ›</Text>
             </Pressable>

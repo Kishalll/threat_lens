@@ -61,11 +61,22 @@ export default function BreachDetailScreen() {
     () => breachSuggestions.filter((suggestion) => !suggestion.isFallback),
     [breachSuggestions]
   );
-  const actedSuggestionsCount = useMemo(
-    () => actionableSuggestions.filter((suggestion) => suggestion.acted).length,
-    [actionableSuggestions]
+  const requiredActionItems = useMemo(
+    () =>
+      renderedGuidance && !renderedGuidance.isFallback
+        ? renderedGuidance.actionItems
+        : [],
+    [renderedGuidance]
   );
-  const totalSuggestionsCount = actionableSuggestions.length;
+  const actedSuggestionsCount = useMemo(
+    () =>
+      Math.min(
+        actionableSuggestions.filter((suggestion) => suggestion.acted).length,
+        requiredActionItems.length
+      ),
+    [actionableSuggestions, requiredActionItems.length]
+  );
+  const totalSuggestionsCount = requiredActionItems.length;
   const storedGuidance = useMemo(
     () => parseStoredGuidance(breach?.geminiGuidance),
     [breach?.geminiGuidance]
@@ -81,7 +92,9 @@ export default function BreachDetailScreen() {
   const progressRatio =
     totalSuggestionsCount === 0 ? (hasGuidance ? 1 : 0) : actedSuggestionsCount / totalSuggestionsCount;
   const progressText =
-    totalSuggestionsCount === 0
+    !hasGuidance
+      ? "AI action plan pending"
+      : totalSuggestionsCount === 0
       ? hasGuidance
         ? "No action items required"
         : "0 of 0 actions completed"

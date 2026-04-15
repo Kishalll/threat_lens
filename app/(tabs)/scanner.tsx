@@ -1,17 +1,34 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { StyleSheet, View, Text, TextInput, Pressable, ScrollView, ActivityIndicator } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import Feather from "@expo/vector-icons/Feather";
 import { useScannerStore } from "../../src/stores/scannerStore";
+import { useDashboardStore } from "../../src/stores/dashboardStore";
 import { THEME } from "../../src/constants/theme";
 
 export default function ScannerScreen() {
   const router = useRouter();
   const { prefill } = useLocalSearchParams<{ prefill?: string | string[] }>();
   const scannerStore = useScannerStore();
+  const suggestions = useDashboardStore((state) => state.suggestions);
   const [textToScan, setTextToScan] = useState("");
   const [scanError, setScanError] = useState<string | null>(null);
   const [lastFailedInput, setLastFailedInput] = useState<string>("");
+
+  const pendingActionsByScanId = useMemo(() => {
+    const pendingById = new Map<string, number>();
+
+    for (const suggestion of suggestions) {
+      if (suggestion.source !== "scan" || suggestion.isFallback || suggestion.acted) {
+        continue;
+      }
+
+      const current = pendingById.get(suggestion.sourceId) ?? 0;
+      pendingById.set(suggestion.sourceId, current + 1);
+    }
+
+    return pendingById;
+  }, [suggestions]);
 
   useEffect(() => {
     const rawPrefill = Array.isArray(prefill) ? prefill[0] : prefill;
@@ -141,6 +158,7 @@ export default function ScannerScreen() {
         <ScrollView style={styles.historyList}>
           {scannerStore.history.map((record, index) => {
             const statusColor = getStatusColor(record.classification);
+            const pendingActions = pendingActionsByScanId.get(record.id) ?? 0;
             return (
               <Pressable 
                 key={record.id} 
@@ -153,6 +171,13 @@ export default function ScannerScreen() {
                      <Text style={[styles.historyClassification, { color: statusColor }]}>
                        {record.classification} ({record.confidence}%)
                      </Text>
+                     {pendingActions > 0 ? (
+                       <View style={styles.pendingTag}>
+                         <Text style={styles.pendingTagText}>
+                           {pendingActions} pending action{pendingActions === 1 ? "" : "s"}
+                         </Text>
+                       </View>
+                     ) : null}
                    </View>
                    <Text style={styles.timestamp}>{new Date(record.timestamp).toLocaleTimeString()}</Text>
                 </View>
@@ -289,6 +314,20 @@ const styles = StyleSheet.create({
     color: THEME.colors.textTertiary,
     fontFamily: THEME.fontFamily.jetbrainsMono,
     fontSize: 10,
+  },
+  pendingTag: {
+    borderWidth: 1,
+    borderColor: `${THEME.colors.warning}99`,
+    backgroundColor: `${THEME.colors.warning}22`,
+    borderRadius: THEME.radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  pendingTagText: {
+    color: THEME.colors.warning,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 10,
+    fontWeight: "700",
   },
   previewText: {
     color: THEME.colors.textSecondary,

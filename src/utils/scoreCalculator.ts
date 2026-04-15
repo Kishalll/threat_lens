@@ -11,6 +11,7 @@ export interface ScoreInputs {
     totalSuggestions: number;
     actedSuggestions: number;
     resolvedBreachEquivalent?: number;
+    pendingBreachCount?: number;
   };
 }
 
@@ -70,7 +71,12 @@ function calculateMessageImpact(message: ScannedMessage): number {
 
 function calculateBreachImpact(inputs: ScoreInputs): number {
   const activeBreachesCount = Math.max(0, Math.floor(inputs.activeBreachesCount));
-  const basePenalty = getBreachPenalty(activeBreachesCount);
+  const pendingBreachCount = Math.max(
+    0,
+    Math.floor(inputs.breachActionProgress?.pendingBreachCount ?? 0)
+  );
+  const effectiveActiveBreaches = Math.max(activeBreachesCount, pendingBreachCount);
+  const basePenalty = getBreachPenalty(effectiveActiveBreaches);
   if (basePenalty === 0) {
     return 0;
   }
@@ -82,7 +88,7 @@ function calculateBreachImpact(inputs: ScoreInputs): number {
 
   const recoveryRatio = Math.min(
     1,
-    resolvedBreachEquivalent / activeBreachesCount
+    resolvedBreachEquivalent / effectiveActiveBreaches
   );
 
   return basePenalty * (1 - recoveryRatio);
