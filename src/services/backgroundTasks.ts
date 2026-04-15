@@ -32,14 +32,30 @@ TaskManager.defineTask(BREACH_CHECK_TASK, async () => {
     // Remember previous breach IDs to detect new ones
     const previousBreaches = useBreachStore.getState().breaches;
     const prevIds = new Set(previousBreaches.map(b => b.id));
+    const previousById = new Map(previousBreaches.map((breach) => [breach.id, breach]));
 
     const results = await checkAllCredentials(itemsToCheck);
+    const mergedResults = results.map((breach) => {
+      const previous = previousById.get(breach.id);
+      if (!previous) {
+        return breach;
+      }
+
+      return {
+        ...breach,
+        resolved: Boolean(previous.resolved),
+        geminiGuidance:
+          typeof previous.geminiGuidance === "string" && previous.geminiGuidance.trim().length > 0
+            ? previous.geminiGuidance
+            : breach.geminiGuidance,
+      };
+    });
     
     // Update state
-    useBreachStore.setState({ breaches: results, lastScanTimestamp: Date.now() });
+    useBreachStore.setState({ breaches: mergedResults, lastScanTimestamp: Date.now() });
 
     // Check for NEW breaches
-    const newBreaches = results.filter(b => !prevIds.has(b.id));
+    const newBreaches = mergedResults.filter(b => !prevIds.has(b.id));
 
     if (newBreaches.length > 0) {
       const credentialSummary = summarizeCredentials(

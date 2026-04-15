@@ -16,6 +16,7 @@ type BreachActionProgress = {
   actedSuggestions: number;
   ratio: number;
   isSecured: boolean;
+  hasGuidance: boolean;
 };
 
 function validateCredentialInput(value: string): string | null {
@@ -39,18 +40,19 @@ function validateCredentialInput(value: string): string | null {
 function buildProgress(
   actedSuggestions: number,
   totalSuggestions: number,
-  currentResolved: boolean
+  hasGuidance: boolean
 ): BreachActionProgress {
   const total = Math.max(0, totalSuggestions);
   const acted = Math.min(Math.max(0, actedSuggestions), total);
-  const ratio = total === 0 ? (currentResolved ? 1 : 0) : acted / total;
+  const isSecured = hasGuidance && (total === 0 || acted === total);
+  const ratio = total === 0 ? (isSecured ? 1 : 0) : acted / total;
 
   return {
     totalSuggestions: total,
     actedSuggestions: acted,
     ratio,
-    // Keep existing resolved state when there are no actionable suggestions.
-    isSecured: total === 0 ? currentResolved : acted === total,
+    isSecured,
+    hasGuidance,
   };
 }
 
@@ -139,11 +141,13 @@ export default function BreachScreen() {
       const actionableSuggestions = breachSuggestions.filter(
         (suggestion) => !suggestion.isFallback
       );
+      const hasGuidance =
+        typeof breach.geminiGuidance === "string" && breach.geminiGuidance.trim().length > 0;
 
       progressById[breach.id] = buildProgress(
         actionableSuggestions.filter((suggestion) => suggestion.acted).length,
         actionableSuggestions.length,
-        Boolean(breach.resolved)
+        hasGuidance
       );
     }
 
@@ -160,7 +164,7 @@ export default function BreachScreen() {
 
     for (const breach of breachStore.breaches) {
       const progress = breachProgressById[breach.id];
-      if (!progress || progress.totalSuggestions === 0) {
+      if (!progress || !progress.hasGuidance) {
         continue;
       }
 
@@ -258,7 +262,7 @@ export default function BreachScreen() {
 
         <View style={[styles.sectionHeader, { marginTop: 24 }]}>
           <Text style={styles.sectionTitle}>Detected Breaches</Text>
-          <Pressable onPress={() => breachStore.runScan()}>
+          <Pressable onPress={() => breachStore.runScan()} disabled={breachStore.isScanning}>
              {breachStore.isScanning ? (
                  <ActivityIndicator size="small" color={THEME.colors.accent} />
              ) : (

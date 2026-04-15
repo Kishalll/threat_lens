@@ -95,6 +95,27 @@ function applyResolvedState(
   }));
 }
 
+function applyPersistedBreachFields(
+  breaches: BreachApiItem[],
+  previousById: Map<string, BreachApiItem>
+): BreachApiItem[] {
+  return breaches.map((breach) => {
+    const previous = previousById.get(breach.id);
+    if (!previous) {
+      return breach;
+    }
+
+    return {
+      ...breach,
+      resolved: Boolean(previous.resolved),
+      geminiGuidance:
+        typeof previous.geminiGuidance === "string" && previous.geminiGuidance.trim().length > 0
+          ? previous.geminiGuidance
+          : breach.geminiGuidance,
+    };
+  });
+}
+
 function persistCredentialsAsync(credentials: StoredCredential[]): void {
   void replaceCredentials(credentials).catch((error) => {
     console.error("Failed to persist credentials", error);
@@ -354,6 +375,10 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
   },
 
   runScan: async (options = {}) => {
+    if (get().isScanning) {
+      return;
+    }
+
     const notifyOnNew = options.notifyOnNew === true;
     const currentCredentials = get().credentials;
 
@@ -371,15 +396,16 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
     try {
       const previousBreaches = get().breaches;
       const previousIds = new Set(previousBreaches.map((breach) => breach.id));
+      const previousById = new Map(previousBreaches.map((breach) => [breach.id, breach]));
       const resolvedById = new Map(
         previousBreaches.map((breach) => [breach.id, Boolean(breach.resolved)])
       );
 
       const itemsToScan = get().credentials.map((c) => c.value);
       const results = await checkAllCredentials(itemsToScan);
-      const sortedResults = applyResolvedState(
-        sortBreachesNewestFirst(results),
-        resolvedById
+      const sortedResults = applyPersistedBreachFields(
+        applyResolvedState(sortBreachesNewestFirst(results), resolvedById),
+        previousById
       );
       const newBreaches = sortedResults.filter((breach) => !previousIds.has(breach.id));
       

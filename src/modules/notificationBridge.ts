@@ -42,7 +42,6 @@ const ALLOWED_MESSAGING_PACKAGES = new Set([
   "jp.naver.line.android",
   "com.tencent.mm", // WeChat
   "com.viber.voip",
-  "com.snapchat.android",
   "com.kakao.talk",
   "com.zing.zalo",
   "com.skype.raider",
@@ -67,12 +66,42 @@ const IGNORED_PACKAGES = new Set([
   "com.android.incallui",
   "org.kde.kdeconnect_tp",
   "com.google.android.gms",
+  "com.snapchat.android",
+
+  // Shopping and commerce
+  "in.amazon.mshop.android.shopping",
+  "com.flipkart.android",
+  "com.myntra.android",
+  "com.meesho.supply",
+
+  // Food and delivery
+  "in.swiggy.android",
+  "com.application.zomato",
+
+  // Travel and utilities
+  "com.olacabs.customer",
+  "com.ubercab",
+  "cris.org.in.prs.ima",
+  "com.myairtelapp",
+  "com.jio.myjio",
 ]);
 
 const IGNORED_TEXT_PATTERNS = [
   /shared mobile data/i,
   /device connected/i,
   /checking for new messages/i,
+  /checking for updates/i,
+  /update available/i,
+  /app updates? available/i,
+  /\b\d+\s+apps?\s+(updated|installed|ready to update)\b/i,
+  /\b(downloading|installing)\s+(update|updates|app|apps)\b/i,
+  /\b(update|installation)\s+(complete|completed|successful)\b/i,
+  /\b(app|apps)\s+(installed|uninstalled)\b/i,
+  /is doing work in the background/i,
+  /working in the background/i,
+  /sync in progress/i,
+  /syncing/i,
+  /backup in progress/i,
   /usb debugging/i,
   /charging this device via usb/i,
   /ongoing call/i,
@@ -81,6 +110,56 @@ const IGNORED_TEXT_PATTERNS = [
   /tap to view more options/i,
   /^android system$/i,
 ];
+
+const LOW_SIGNAL_PATTERNS = [
+  /\bis typing\b/i,
+  /\breacted to your (message|story)\b/i,
+  /\bmentioned you in a (story|post)\b/i,
+  /\bstarted a call\b/i,
+  /\bmissed (voice|video) call\b/i,
+  /\bmissed call\b/i,
+  /^new message$/i,
+];
+
+const TEAMS_LOW_SIGNAL_PATTERNS = [
+  /\b(meeting|call) (starting|started|ended)\b/i,
+  /\bjoin now\b/i,
+  /\bscheduled (a )?meeting\b/i,
+  /\breacted with\b/i,
+  /\bchanged the (team|channel|group) (name|picture)\b/i,
+  /\badded you to (a )?(team|channel|group)\b/i,
+  /\bmentioned you in a channel\b/i,
+];
+
+const MESSENGER_LOW_SIGNAL_PATTERNS = [
+  /\breacted to your message\b/i,
+  /\bis active now\b/i,
+  /\bstarted a call\b/i,
+  /\bmissed (voice|video) call\b/i,
+];
+
+const INSTAGRAM_LOW_SIGNAL_PATTERNS = [
+  /\bstarted following you\b/i,
+  /\bliked your (post|photo|story|reel)\b/i,
+  /\bcommented on your (post|reel)\b/i,
+  /\bmentioned you in (their )?story\b/i,
+  /\bsent you a reel\b/i,
+  /\bposted to (their )?(story|reel)\b/i,
+];
+
+const APP_SPECIFIC_LOW_SIGNAL_PATTERNS: Record<string, RegExp[]> = {
+  "com.microsoft.teams": TEAMS_LOW_SIGNAL_PATTERNS,
+  "com.facebook.orca": MESSENGER_LOW_SIGNAL_PATTERNS,
+  "com.instagram.android": INSTAGRAM_LOW_SIGNAL_PATTERNS,
+};
+
+const SERVICE_NOTIFICATION_CATEGORIES = new Set([
+  "service",
+  "status",
+  "progress",
+  "transport",
+  "sys",
+]);
 
 const DUPLICATE_WINDOW_MS = 120_000;
 const CLASSIFICATION_COOLDOWN_MS = 2_000;
@@ -99,6 +178,8 @@ type NativeNotificationEvent = {
   text?: string;
   isTruncated?: boolean;
   postedAt?: number;
+  category?: string;
+  isOngoing?: boolean;
 };
 
 function cleanupOldEntries(map: Map<string, number>, ttlMs: number, now: number): void {
@@ -135,7 +216,45 @@ function isNoiseText(title: string, text: string): boolean {
   return IGNORED_TEXT_PATTERNS.some((pattern) => pattern.test(combined));
 }
 
-function shouldClassify(packageName: string, title: string, text: string): boolean {
+function isLikelySystemOrServiceNotification(category: string, isOngoing: boolean): boolean {
+  if (isOngoing) {
+    return true;
+  }
+
+  const normalizedCategory = category.trim().toLowerCase();
+  if (!normalizedCategory) {
+    return false;
+  }
+
+  return SERVICE_NOTIFICATION_CATEGORIES.has(normalizedCategory);
+}
+
+function isLowSignalNotification(packageName: string, title: string, text: string): boolean {
+  const combined = `${title}\n${text}`.trim();
+  if (!combined) {
+    return true;
+  }
+
+  if (LOW_SIGNAL_PATTERNS.some((pattern) => pattern.test(combined))) {
+    return true;
+  }
+
+  const normalizedPackage = packageName.trim().toLowerCase();
+  const packagePatterns = APP_SPECIFIC_LOW_SIGNAL_PATTERNS[normalizedPackage];
+  if (Array.isArray(packagePatterns)) {
+    return packagePatterns.some((pattern) => pattern.test(combined));
+  }
+
+  return false;
+}
+
+function shouldClassify(
+  packageName: string,
+  title: string,
+  text: string,
+  category: string,
+  isOngoing: boolean
+): boolean {
   const now = Date.now();
   if (now < classificationPausedUntil) {
     return false;
@@ -146,6 +265,14 @@ function shouldClassify(packageName: string, title: string, text: string): boole
   }
 
   if (isNoiseText(title, text)) {
+    return false;
+  }
+
+  if (isLikelySystemOrServiceNotification(category, isOngoing)) {
+    return false;
+  }
+
+  if (isLowSignalNotification(packageName, title, text)) {
     return false;
   }
 
@@ -267,6 +394,10 @@ function isExpectedClassificationDegrade(message: string): boolean {
   );
 }
 
+function isScanCancelledError(message: string): boolean {
+  return message.toLowerCase().includes("scan cancelled");
+}
+
 /**
  * Initializes the React Native listener that intercepts events from the Kotlin NotificationService
  */
@@ -289,6 +420,8 @@ export function initializeNotificationInterceptor() {
     const title = typeof event.title === "string" ? event.title : "";
     const text = typeof event.text === "string" ? event.text : "";
     const isTruncated = event.isTruncated === true;
+    const category = typeof event.category === "string" ? event.category : "";
+    const isOngoing = event.isOngoing === true;
 
     try {
       if (!isLikelyMessagingPackage(packageName)) {
@@ -308,7 +441,11 @@ export function initializeNotificationInterceptor() {
         return;
       }
 
-      if (!shouldClassify(packageName, title, text)) {
+      if (useScannerStore.getState().isScanning) {
+        return;
+      }
+
+      if (!shouldClassify(packageName, title, text, category, isOngoing)) {
         return;
       }
 
@@ -337,6 +474,10 @@ export function initializeNotificationInterceptor() {
         error instanceof Error && error.message.trim().length > 0
           ? error.message
           : "Automatic scan is temporarily unavailable.";
+
+      if (isScanCancelledError(message)) {
+        return;
+      }
 
       if (isExpectedClassificationDegrade(message)) {
         const retryAfterMs = parseRetryAfterMs(message);
