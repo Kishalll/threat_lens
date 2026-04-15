@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo } from "react";
 import {
   StyleSheet,
   View,
@@ -18,9 +18,13 @@ export default function HomeScreen() {
   const refreshScore = useDashboardStore((state) => state.refreshScore);
   const safetyScore = useDashboardStore((state) => state.SafetyScore);
   const activeBreachesCount = useDashboardStore((state) => state.activeBreachesCount);
-  const flaggedMessagesScanCount = useDashboardStore((state) => state.flaggedMessagesScanCount);
+  const scannedMessages = useDashboardStore((state) => state.scannedMessages);
   const protectedImagesCount = useDashboardStore((state) => state.protectedImagesCount);
   const lastUpdateTimestamp = useDashboardStore((state) => state.lastUpdateTimestamp);
+  const flaggedMessagesScanCount = useMemo(
+    () => scannedMessages.filter((message) => message.riskType !== "SAFE").length,
+    [scannedMessages]
+  );
 
   useEffect(() => {
     // Refresh score if needed on mount
@@ -50,8 +54,10 @@ export default function HomeScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.header}>
-        <Text style={styles.greeting}>Digital Safety Overview</Text>
-        <Text style={styles.subheading}>Action-driven security intelligence</Text>
+        <Text style={styles.appName}>ThreatLens</Text>
+        <Text style={styles.tagline}>
+          See risks. Act fast. Stay protected.
+        </Text>
       </View>
 
       <SafetyScoreBar score={safetyScore} />
@@ -110,12 +116,20 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 4,
   },
-  greeting: {
+  appName: {
+  fontFamily: THEME.fontFamily.dmSans,
+  fontSize: 32,
+  fontWeight: "700",
+  color: THEME.colors.textPrimary,
+  letterSpacing: 0.5,
+  },
+
+  tagline: {
+    marginTop: 6,
     fontFamily: THEME.fontFamily.dmSans,
-    fontSize: THEME.typography.h1,
-    color: THEME.colors.textPrimary,
-    fontWeight: "700",
-    letterSpacing: 0.2,
+    fontSize: 14,
+    color: THEME.colors.textSecondary,
+    opacity: 0.8,
   },
   subheading: {
     marginTop: 4,

@@ -1,49 +1,42 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, View, Text, ScrollView, Pressable, ActivityIndicator } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import Feather from "@expo/vector-icons/Feather";
 import { useBreachStore } from "../../src/stores/breachStore";
-import { generateBreachGuidance } from "../../src/services/geminiService";
 import { useDashboardStore } from "../../src/stores/dashboardStore";
 import { THEME } from "../../src/constants/theme";
+import type { BreachGuidance } from "../../src/types";
 
-const FALLBACK_GUIDANCE_PATTERNS = [
-  "ai guidance unavailable",
-  "temporarily unavailable",
-  "quota",
-  "retry",
-  "api key",
-];
-
-function parseGuidanceSuggestions(guidance: string): string[] {
-  const lines = guidance
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => line.replace(/^[-*]\s+/, "").replace(/^\d+[.)]\s+/, "").trim())
-    .filter((line) => line.length > 0);
-
-  if (lines.length === 0 && guidance.trim().length > 0) {
-    return [guidance.trim()];
+function parseStoredGuidance(value?: string): BreachGuidance | null {
+  if (!value) {
+    return null;
   }
 
-  const seen = new Set<string>();
-  const unique: string[] = [];
-
-  for (const line of lines) {
-    const key = line.toLowerCase();
-    if (!seen.has(key)) {
-      seen.add(key);
-      unique.push(line);
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as { summary?: unknown }).summary === "string" &&
+      Array.isArray((parsed as { actionItems?: unknown }).actionItems)
+    ) {
+      return {
+        summary: (parsed as { summary: string }).summary,
+        actionItems: (parsed as { actionItems: unknown[] }).actionItems.filter(
+          (item): item is string => typeof item === "string" && item.trim().length > 0
+        ),
+        isFallback: Boolean((parsed as { isFallback?: unknown }).isFallback),
+      };
     }
+  } catch {
+    return {
+      summary: value.trim(),
+      actionItems: [],
+      isFallback: false,
+    };
   }
 
-  return unique;
-}
-
-function isFallbackGuidance(guidance: string): boolean {
-  const normalized = guidance.toLowerCase();
-  return FALLBACK_GUIDANCE_PATTERNS.some((pattern) => normalized.includes(pattern));
+  return null;
 }
 
 export default function BreachDetailScreen() {
@@ -54,6 +47,7 @@ export default function BreachDetailScreen() {
   const getSuggestionsForSource = useDashboardStore((state) => state.getSuggestionsForSource);
   const registerSuggestions = useDashboardStore((state) => state.registerSuggestions);
   const markSuggestionAsDone = useDashboardStore((state) => state.markSuggestionAsDone);
+  const requestBreachGuidance = useBreachStore((state) => state.requestBreachGuidance);
   const syncBreachResolutionFromSuggestions = useBreachStore(
     (state) => state.syncBreachResolutionFromSuggestions
   );
@@ -72,41 +66,94 @@ export default function BreachDetailScreen() {
     [actionableSuggestions]
   );
   const totalSuggestionsCount = actionableSuggestions.length;
-  const progressRatio =
-    totalSuggestionsCount === 0 ? 0 : actedSuggestionsCount / totalSuggestionsCount;
-  const isSecured = totalSuggestionsCount > 0 && actedSuggestionsCount === totalSuggestionsCount;
-  
-  const [guidance, setGuidance] = useState<string>("");
+  const storedGuidance = useMemo(
+    () => parseStoredGuidance(breach?.geminiGuidance),
+    [breach?.geminiGuidance]
+  );
+  const breachId = breach?.id;
+  const isFetchingRef = useRef(false);
+  const [guidance, setGuidance] = useState<BreachGuidance | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [guidanceError, setGuidanceError] = useState<string | null>(null);
+  const renderedGuidance = storedGuidance ?? guidance;
+  const hasGuidance = Boolean(renderedGuidance);
+  const isSecured = hasGuidance && (totalSuggestionsCount === 0 || actedSuggestionsCount === totalSuggestionsCount);
+  const progressRatio =
+    totalSuggestionsCount === 0 ? (hasGuidance ? 1 : 0) : actedSuggestionsCount / totalSuggestionsCount;
+  const progressText =
+    totalSuggestionsCount === 0
+      ? hasGuidance
+        ? "No action items required"
+        : "0 of 0 actions completed"
+      : `${actedSuggestionsCount} of ${totalSuggestionsCount} actions completed`;
 
   useEffect(() => {
-    if (breach) {
-      let isCancelled = false;
-      setLoading(true);
-      generateBreachGuidance(breach).then((result) => {
+    if (!breachId) {
+      setLoading(false);
+      return;
+    }
+
+    if (storedGuidance) {
+      setGuidance(null);
+      setGuidanceError(null);
+      setLoading(false);
+      return;
+    }
+
+    if (isFetchingRef.current) {
+      return;
+    }
+
+    let isCancelled = false;
+    isFetchingRef.current = true;
+    setGuidance(null);
+    setGuidanceError(null);
+    setLoading(true);
+
+    void requestBreachGuidance(breachId)
+      .then(() => {
         if (isCancelled) {
           return;
         }
 
-        setGuidance(result);
-        setLoading(false);
+        const nextBreach = useBreachStore.getState().breaches.find((item) => item.id === breachId);
+        const nextGuidance = parseStoredGuidance(nextBreach?.geminiGuidance);
+        setGuidance(nextGuidance);
+      })
+      .catch((error) => {
+        if (isCancelled) {
+          return;
+        }
+
+        const message =
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "AI guidance failed to generate right now.";
+        setGuidanceError(message);
+      })
+      .finally(() => {
+        isFetchingRef.current = false;
+        if (!isCancelled) {
+          setLoading(false);
+        }
       });
 
-      return () => {
-        isCancelled = true;
-      };
-    }
-  }, [breach]);
+    return () => {
+      isCancelled = true;
+      isFetchingRef.current = false;
+    };
+  }, [breach?.id]);
 
   useEffect(() => {
-    if (!breach || loading || guidance.trim().length === 0) {
+    if (!breach || loading || !renderedGuidance) {
       return;
     }
 
-    registerSuggestions("breach", breach.id, parseGuidanceSuggestions(guidance), {
-      isFallback: isFallbackGuidance(guidance),
+    registerSuggestions("breach", breach.id, renderedGuidance.actionItems, {
+      isFallback: renderedGuidance.isFallback,
+      replaceExisting: true,
     });
-  }, [breach, guidance, loading, registerSuggestions]);
+  }, [breach, loading, registerSuggestions, renderedGuidance]);
 
   useEffect(() => {
     if (!breach) {
@@ -161,9 +208,7 @@ export default function BreachDetailScreen() {
             ]}
           />
         </View>
-        <Text style={styles.progressText}>
-          {actedSuggestionsCount} of {totalSuggestionsCount} actions completed
-        </Text>
+        <Text style={styles.progressText}>{progressText}</Text>
       </View>
 
       <Text style={styles.sectionTitle}>What was leaked?</Text>
@@ -185,33 +230,49 @@ export default function BreachDetailScreen() {
             <ActivityIndicator size="large" color="#4ADE80" />
             <Text style={styles.loadingText}>Generating AI recovery plan...</Text>
           </View>
-        ) : breachSuggestions.length > 0 ? (
-          breachSuggestions.map((suggestion) => (
-            <View key={suggestion.id} style={styles.suggestionRow}>
-              <Text style={styles.guidanceText}>{suggestion.text}</Text>
-              {!suggestion.isFallback ? (
-                <Pressable
-                  style={[
-                    styles.doneButton,
-                    suggestion.acted && styles.doneButtonCompleted,
-                  ]}
-                  onPress={() => markSuggestionAsDone(suggestion.id)}
-                  disabled={suggestion.acted}
-                >
-                  <Text
-                    style={[
-                      styles.doneButtonText,
-                      suggestion.acted && styles.doneButtonTextCompleted,
-                    ]}
-                  >
-                    {suggestion.acted ? "Done" : "Mark as Done"}
-                  </Text>
-                </Pressable>
-              ) : null}
+        ) : guidanceError ? (
+          <Text style={styles.errorText}>{guidanceError}</Text>
+        ) : renderedGuidance ? (
+          <View style={styles.guidanceStack}>
+            <View style={styles.summaryCard}>
+              <Text style={styles.subsectionTitle}>Summary</Text>
+              <Text style={styles.guidanceText}>{renderedGuidance.summary}</Text>
             </View>
-          ))
+
+            <View style={styles.actionCard}>
+              <Text style={styles.subsectionTitle}>Action Items</Text>
+              {breachSuggestions.length > 0 ? (
+                breachSuggestions.map((suggestion) => (
+                  <View key={suggestion.id} style={styles.suggestionRow}>
+                    <Text style={styles.guidanceText}>{suggestion.text}</Text>
+                    {!suggestion.isFallback ? (
+                      <Pressable
+                        style={[
+                          styles.doneButton,
+                          suggestion.acted && styles.doneButtonCompleted,
+                        ]}
+                        onPress={() => markSuggestionAsDone(suggestion.id)}
+                        disabled={suggestion.acted}
+                      >
+                        <Text
+                          style={[
+                            styles.doneButtonText,
+                            suggestion.acted && styles.doneButtonTextCompleted,
+                          ]}
+                        >
+                          {suggestion.acted ? "Done" : "Mark as Done"}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.guidanceText}>No follow-up actions were generated.</Text>
+              )}
+            </View>
+          </View>
         ) : (
-          <Text style={styles.guidanceText}>{guidance}</Text>
+          <Text style={styles.guidanceText}>No guidance available yet.</Text>
         )}
       </View>
 
@@ -358,6 +419,29 @@ const styles = StyleSheet.create({
     minHeight: 100,
     justifyContent: "center",
     gap: 10,
+  },
+  guidanceStack: {
+    gap: 12,
+  },
+  summaryCard: {
+    backgroundColor: "rgba(255,255,255,0.03)",
+    borderRadius: THEME.radius.md,
+    padding: 14,
+    gap: 8,
+  },
+  actionCard: {
+    backgroundColor: "rgba(255,255,255,0.03)",
+    borderRadius: THEME.radius.md,
+    padding: 14,
+    gap: 10,
+  },
+  subsectionTitle: {
+    color: THEME.colors.textTertiary,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   guidanceText: {
     color: THEME.colors.textPrimary,

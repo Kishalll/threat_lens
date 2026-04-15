@@ -19,6 +19,7 @@ export type BreachApiItem = {
   matchedCredentialType?: "email" | "username";
   source: "XposedOrNot" | "LeakCheck";
   resolved?: boolean;
+  geminiGuidance?: string;
 };
 
 function toErrorMessage(error: unknown, fallback: string): string {

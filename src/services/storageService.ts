@@ -1,10 +1,109 @@
 import * as SQLite from "expo-sqlite";
 import type { BreachApiItem } from "./breachApiService";
 
-// For SDK 51, expo-sqlite returns a synchronous DB context for standard executeSql 
-// or async via new APIs
+const DATABASE_NAME = "threatlens_secure.db";
+
+const DATABASE_SCHEMA_SQL = `
+  PRAGMA journal_mode = WAL;
+
+  CREATE TABLE IF NOT EXISTS credentials (
+    id TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    type TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS seen_breach_ids (
+    id TEXT PRIMARY KEY,
+    timestamp INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS watermark_log (
+    uuid TEXT PRIMARY KEY,
+    timestamp INTEGER NOT NULL,
+    original_filename TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS scan_results (
+    id TEXT PRIMARY KEY,
+    classification TEXT,
+    confidence INTEGER,
+    messagePreview TEXT,
+    timestamp INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS breach_cache (
+    id TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+`;
+
 let db: SQLite.SQLiteDatabase | null = null;
+let dbInitPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 let credentialsWriteQueue: Promise<void> = Promise.resolve();
+let breachCacheWriteQueue: Promise<void> = Promise.resolve();
+
+function isInvalidDatabaseHandleError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("nativedatabase.prepareasync") ||
+    message.includes("nullpointerexception")
+  );
+}
+
+async function openAndInitializeDatabase(): Promise<SQLite.SQLiteDatabase> {
+  const openedDb = await SQLite.openDatabaseAsync(DATABASE_NAME);
+  await openedDb.execAsync(DATABASE_SCHEMA_SQL);
+  return openedDb;
+}
+
+async function ensureDatabase(): Promise<SQLite.SQLiteDatabase> {
+  if (db) {
+    return db;
+  }
+
+  if (!dbInitPromise) {
+    dbInitPromise = openAndInitializeDatabase()
+      .then((openedDb) => {
+        db = openedDb;
+        console.log("Database initialized successfully.");
+        return openedDb;
+      })
+      .catch((error) => {
+        db = null;
+        console.error("Database initialization failed", error);
+        throw error;
+      })
+      .finally(() => {
+        dbInitPromise = null;
+      });
+  }
+
+  return dbInitPromise;
+}
+
+async function withDatabase<T>(
+  task: (database: SQLite.SQLiteDatabase) => Promise<T>
+): Promise<T> {
+  const firstDb = await ensureDatabase();
+
+  try {
+    return await task(firstDb);
+  } catch (error) {
+    if (!isInvalidDatabaseHandleError(error)) {
+      throw error;
+    }
+
+    // Re-open once when native DB handle becomes invalid after app/runtime transitions.
+    db = null;
+    const recoveredDb = await ensureDatabase();
+    return task(recoveredDb);
+  }
+}
 
 function enqueueCredentialsWrite(task: () => Promise<void>): Promise<void> {
   credentialsWriteQueue = credentialsWriteQueue
@@ -16,6 +115,16 @@ function enqueueCredentialsWrite(task: () => Promise<void>): Promise<void> {
   return credentialsWriteQueue;
 }
 
+function enqueueBreachCacheWrite(task: () => Promise<void>): Promise<void> {
+  breachCacheWriteQueue = breachCacheWriteQueue
+    .catch(() => {
+      // Swallow previous write failures so future writes can proceed.
+    })
+    .then(task);
+
+  return breachCacheWriteQueue;
+}
+
 export type StoredCredential = {
   id: string;
   value: string;
@@ -23,63 +132,24 @@ export type StoredCredential = {
 };
 
 export async function initDatabase() {
-  try {
-    db = await SQLite.openDatabaseAsync("threatlens_secure.db");
-    
-    // Create Tables
-    await db.execAsync(`
-      PRAGMA journal_mode = WAL;
-      
-      CREATE TABLE IF NOT EXISTS credentials (
-        id TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        type TEXT NOT NULL
-      );
-      
-      CREATE TABLE IF NOT EXISTS seen_breach_ids (
-        id TEXT PRIMARY KEY,
-        timestamp INTEGER NOT NULL
-      );
-      
-      CREATE TABLE IF NOT EXISTS watermark_log (
-        uuid TEXT PRIMARY KEY,
-        timestamp INTEGER NOT NULL,
-        original_filename TEXT
-      );
-      
-      CREATE TABLE IF NOT EXISTS scan_results (
-        id TEXT PRIMARY KEY,
-        classification TEXT,
-        confidence INTEGER,
-        messagePreview TEXT,
-        timestamp INTEGER NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS breach_cache (
-        id TEXT PRIMARY KEY,
-        payload TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-    `);
-    
-    console.log("Database initialized successfully.");
-  } catch (error) {
-    console.error("Database initialization failed", error);
-    throw error;
-  }
+  await ensureDatabase();
 }
 
 export async function insertCredential(id: string, value: string, type: string) {
-  if (!db) return;
   await enqueueCredentialsWrite(async () => {
-    if (!db) return;
-    await db.runAsync('INSERT OR REPLACE INTO credentials (id, value, type) VALUES (?, ?, ?)', [id, value, type]);
+    await withDatabase(async (database) => {
+      await database.runAsync(
+        "INSERT OR REPLACE INTO credentials (id, value, type) VALUES (?, ?, ?)",
+        [id, value, type]
+      );
+    });
   });
 }
 
 export async function getCredentials(): Promise<StoredCredential[]> {
-  if (!db) return [];
-  const allRows = await db.getAllAsync('SELECT * FROM credentials');
+  const allRows = await withDatabase((database) =>
+    database.getAllAsync("SELECT * FROM credentials")
+  );
   return allRows
     .map((row) => {
       const typed = row as { id?: unknown; value?: unknown; type?: unknown };
@@ -101,25 +171,23 @@ export async function getCredentials(): Promise<StoredCredential[]> {
 }
 
 export async function replaceCredentials(credentials: StoredCredential[]): Promise<void> {
-  if (!db) return;
-
   await enqueueCredentialsWrite(async () => {
-    if (!db) return;
-
-    await db.runAsync("DELETE FROM credentials");
-    for (const credential of credentials) {
-      await db.runAsync(
-        "INSERT OR REPLACE INTO credentials (id, value, type) VALUES (?, ?, ?)",
-        [credential.id, credential.value, credential.type]
-      );
-    }
+    await withDatabase(async (database) => {
+      await database.runAsync("DELETE FROM credentials");
+      for (const credential of credentials) {
+        await database.runAsync(
+          "INSERT OR REPLACE INTO credentials (id, value, type) VALUES (?, ?, ?)",
+          [credential.id, credential.value, credential.type]
+        );
+      }
+    });
   });
 }
 
 export async function getCachedBreaches(): Promise<BreachApiItem[]> {
-  if (!db) return [];
-
-  const rows = await db.getAllAsync("SELECT payload FROM breach_cache");
+  const rows = await withDatabase((database) =>
+    database.getAllAsync("SELECT payload FROM breach_cache")
+  );
   return rows
     .map((row) => {
       const typed = row as { payload?: unknown };
@@ -137,15 +205,16 @@ export async function getCachedBreaches(): Promise<BreachApiItem[]> {
 }
 
 export async function replaceCachedBreaches(breaches: BreachApiItem[]): Promise<void> {
-  if (!db) return;
-
-  await db.runAsync("DELETE FROM breach_cache");
-  const now = Date.now();
-
-  for (const breach of breaches) {
-    await db.runAsync(
-      "INSERT INTO breach_cache (id, payload, updated_at) VALUES (?, ?, ?)",
-      [breach.id, JSON.stringify(breach), now]
-    );
-  }
+  await enqueueBreachCacheWrite(async () => {
+    const now = Date.now();
+    await withDatabase(async (database) => {
+      await database.runAsync("DELETE FROM breach_cache");
+      for (const breach of breaches) {
+        await database.runAsync(
+          "INSERT INTO breach_cache (id, payload, updated_at) VALUES (?, ?, ?)",
+          [breach.id, JSON.stringify(breach), now]
+        );
+      }
+    });
+  });
 }

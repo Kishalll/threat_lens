@@ -16,6 +16,12 @@ export interface BreachRecord {
   geminiGuidance?: string;
 }
 
+export interface BreachGuidance {
+  summary: string;
+  actionItems: string[];
+  isFallback: boolean;
+}
+
 export interface ScanResult {
   id: string;
   timestamp: number;
