@@ -2,7 +2,7 @@ import "react-native-get-random-values";
 import { v4 as uuidv4 } from "uuid";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getKey } from "./secureKeyService";
-import type { ScanResult } from "../types";
+import type { BreachGuidance, ScanResult } from "../types";
 
 const GEMINI_MODEL_CANDIDATES = [
   "gemini-2.5-flash",
@@ -189,14 +189,65 @@ function getClassifyFallbackExplanation(error: unknown): string {
   return "Unable to analyse message at this time.";
 }
 
-function getBreachFallbackGuidance(error: unknown): string {
+function getBreachFallbackGuidance(error: unknown): BreachGuidance {
   if (isCompromisedOrInvalidKeyError(error)) {
-    return "- AI guidance unavailable because Gemini API key is invalid/flagged\n- Add a new API key and restart the app\n- In the meantime: change passwords, enable 2FA, and monitor suspicious logins";
+    return {
+      summary: "AI guidance is unavailable because the Gemini API key is invalid or flagged.",
+      actionItems: [
+        "Add a new API key and restart the app",
+        "Change passwords for affected accounts",
+        "Enable 2FA and monitor suspicious logins",
+      ],
+      isFallback: true,
+    };
   }
   if (isQuotaOrRateLimitError(error)) {
-    return "- AI guidance is temporarily unavailable due to quota limits\n- Change passwords for affected accounts\n- Enable 2FA and watch for phishing attempts";
+    return {
+      summary: "AI guidance is temporarily unavailable because Gemini is rate limited or out of quota.",
+      actionItems: [
+        "Change passwords for affected accounts",
+        "Enable 2FA",
+        "Watch for phishing attempts",
+      ],
+      isFallback: true,
+    };
   }
-  return "- Change passwords for affected accounts\n- Enable 2FA\n- Watch for phishing attempts";
+  return {
+    summary: "Review the affected account, change credentials, and monitor for suspicious activity.",
+    actionItems: ["Change passwords for affected accounts", "Enable 2FA", "Watch for phishing attempts"],
+    isFallback: true,
+  };
+}
+
+function normalizeGuidanceItems(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function fallbackGuidanceFromText(text: string, isFallback: boolean): BreachGuidance {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^[-*]\s+/, ""))
+    .filter((line) => line.length > 0);
+
+  const [summaryLine, ...actionLines] = lines;
+
+  return {
+    summary:
+      summaryLine ??
+      "Review the affected account, change credentials, and monitor for suspicious activity.",
+    actionItems:
+      actionLines.length > 0
+        ? actionLines
+        : ["Change passwords for affected accounts", "Enable 2FA", "Watch for phishing attempts"],
+    isFallback,
+  };
 }
 
 function normalizeClassification(value: unknown): ScanResult["classification"] {
@@ -439,20 +490,47 @@ export async function classifyWithRetry(text: string, retries = 3) {
   throw new Error("Failed after retries");
 }
 
-export async function generateBreachGuidance(breachMetadata: object): Promise<string> {
+export async function generateBreachGuidance(breachMetadata: object): Promise<BreachGuidance> {
   try {
-    const prompt = `You are a cybersecurity assistant. The user's information was found in a data breach with these details: ${JSON.stringify(breachMetadata)}. 
-    
-    Provide a concise, 3-point plain English explanation and recovery checklist. Do not output markdown, just plain text with simple bullet points (-).`;
+    const prompt = `You are a cybersecurity assistant. The user's information was found in a data breach with these details: ${JSON.stringify(breachMetadata)}.
+
+Respond ONLY with valid JSON matching this schema:
+{
+  "summary": "1-2 short plain English sentences",
+  "action_items": ["short actionable step", "short actionable step", "short actionable step"]
+}
+
+Rules:
+- Keep the summary separate from the action items.
+- Use plain English. No markdown, no code fences, no extra keys.
+- Prefer concrete recovery steps that the user can actually do now.`;
 
     const responseText = await generateWithGemini(prompt);
-    return responseText.trim();
+    const parsed = parseGeminiJsonResponse(responseText) as {
+      summary?: unknown;
+      action_items?: unknown;
+      actionItems?: unknown;
+    };
+
+    const summary = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
+    const actionItems = normalizeGuidanceItems(parsed.action_items ?? parsed.actionItems);
+
+    if (summary.length > 0 && actionItems.length > 0) {
+      return {
+        summary,
+        actionItems,
+        isFallback: false,
+      };
+    }
+
+    return fallbackGuidanceFromText(responseText, false);
   } catch (error) {
     if (isCompromisedOrInvalidKeyError(error) || isQuotaOrRateLimitError(error)) {
       console.warn("generateBreachGuidance degraded", error);
-    } else {
-      console.error("generateBreachGuidance failed", error);
+      return getBreachFallbackGuidance(error);
     }
-    return getBreachFallbackGuidance(error);
+
+    console.error("generateBreachGuidance failed", error);
+    throw error;
   }
 }

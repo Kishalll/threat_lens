@@ -10,6 +10,7 @@ import {
   type StoredCredential,
 } from "../services/storageService";
 import { sendLocalNotification } from "../services/notificationService";
+import { generateBreachGuidance } from "../services/geminiService";
 import { useDashboardStore } from "./dashboardStore";
 
 // Type mapping for credentials
@@ -31,6 +32,11 @@ export interface BreachState {
   removeCredential: (id: string) => void;
   markBreachAsResolved: (id: string) => void;
   syncBreachResolutionFromSuggestions: (resolutionById: Record<string, boolean>) => void;
+  saveBreachGuidance: (
+    id: string,
+    guidance: { summary: string; actionItems: string[]; isFallback: boolean }
+  ) => void;
+  requestBreachGuidance: (id: string) => Promise<void>;
   runScan: (options?: { notifyOnNew?: boolean }) => Promise<void>;
   hydrateFromStorage: () => Promise<void>;
 }
@@ -89,6 +95,52 @@ function applyResolvedState(
   }));
 }
 
+function persistCredentialsAsync(credentials: StoredCredential[]): void {
+  void replaceCredentials(credentials).catch((error) => {
+    console.error("Failed to persist credentials", error);
+  });
+}
+
+function persistBreachCacheAsync(breaches: BreachApiItem[]): void {
+  void replaceCachedBreaches(breaches).catch((error) => {
+    console.error("Failed to persist breach cache", error);
+  });
+}
+
+function parseStoredGuidance(
+  value?: string
+): { summary: string; actionItems: string[]; isFallback: boolean } | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as { summary?: unknown }).summary === "string" &&
+      Array.isArray((parsed as { actionItems?: unknown }).actionItems)
+    ) {
+      return {
+        summary: (parsed as { summary: string }).summary,
+        actionItems: (parsed as { actionItems: unknown[] }).actionItems.filter(
+          (item): item is string => typeof item === "string" && item.trim().length > 0
+        ),
+        isFallback: Boolean((parsed as { isFallback?: unknown }).isFallback),
+      };
+    }
+  } catch {
+    return {
+      summary: value.trim(),
+      actionItems: [],
+      isFallback: false,
+    };
+  }
+
+  return null;
+}
+
 export const useBreachStore = create<BreachState>()((set, get) => ({
   credentials: [],
   breaches: [],
@@ -114,7 +166,7 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
         { id: uuidv4(), value: normalized, type },
       ];
 
-      void replaceCredentials(toStoredCredentials(nextCredentials));
+      persistCredentialsAsync(toStoredCredentials(nextCredentials));
 
       return {
         credentials: nextCredentials,
@@ -141,8 +193,8 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
 
       nextActiveBreachesCount = countActiveBreaches(nextBreaches);
 
-      void replaceCredentials(toStoredCredentials(nextCredentials));
-      void replaceCachedBreaches(nextBreaches);
+      persistCredentialsAsync(toStoredCredentials(nextCredentials));
+      persistBreachCacheAsync(nextBreaches);
 
       return {
         credentials: nextCredentials,
@@ -172,7 +224,7 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
 
       nextActiveBreachesCount = countActiveBreaches(breaches);
 
-      void replaceCachedBreaches(breaches);
+      persistBreachCacheAsync(breaches);
 
       return {
         ...state,
@@ -188,7 +240,19 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
   },
 
   syncBreachResolutionFromSuggestions: (resolutionById) => {
-    let didUpdate = false;
+    const currentBreaches = get().breaches;
+    const hasAnyChange = currentBreaches.some((breach) => {
+      const nextResolved = resolutionById[breach.id];
+      return (
+        typeof nextResolved === "boolean" &&
+        Boolean(breach.resolved) !== nextResolved
+      );
+    });
+
+    if (!hasAnyChange) {
+      return;
+    }
+
     let nextActiveBreachesCount = 0;
 
     set((state) => {
@@ -202,19 +266,14 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
           return breach;
         }
 
-        didUpdate = true;
         return {
           ...breach,
           resolved: nextResolved,
         };
       });
 
-      if (!didUpdate) {
-        return state;
-      }
-
       nextActiveBreachesCount = countActiveBreaches(nextBreaches);
-      void replaceCachedBreaches(nextBreaches);
+      persistBreachCacheAsync(nextBreaches);
 
       return {
         ...state,
@@ -222,11 +281,49 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
       };
     });
 
-    if (didUpdate) {
-      useDashboardStore.getState().updateDashboardData({
-        activeBreachesCount: nextActiveBreachesCount,
-      });
+    useDashboardStore.getState().updateDashboardData({
+      activeBreachesCount: nextActiveBreachesCount,
+    });
+  },
+
+  saveBreachGuidance: (id, guidance) => {
+    set((state) => {
+      const target = state.breaches.find((breach) => breach.id === id);
+      if (!target) {
+        return state;
+      }
+
+      const serializedGuidance = JSON.stringify(guidance);
+      const breaches = state.breaches.map((breach) =>
+        breach.id === id ? { ...breach, geminiGuidance: serializedGuidance } : breach
+      );
+
+      persistBreachCacheAsync(breaches);
+
+      return {
+        ...state,
+        breaches,
+      };
+    });
+  },
+
+  requestBreachGuidance: async (id) => {
+    const breach = get().breaches.find((item) => item.id === id);
+    if (!breach) {
+      return;
     }
+
+    const cachedGuidance = parseStoredGuidance(breach.geminiGuidance ?? undefined);
+    if (cachedGuidance) {
+      return;
+    }
+
+    const guidance = await generateBreachGuidance(breach);
+    if (guidance.isFallback) {
+      throw new Error("AI guidance is temporarily unavailable. Please try reopening this breach.");
+    }
+
+    get().saveBreachGuidance(id, guidance);
   },
 
   hydrateFromStorage: async () => {
@@ -262,7 +359,7 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
 
     if (currentCredentials.length === 0) {
       set({ breaches: [], isScanning: false, scanError: null });
-      void replaceCachedBreaches([]);
+      persistBreachCacheAsync([]);
       useDashboardStore.getState().updateDashboardData({
         activeBreachesCount: 0,
       });
@@ -293,8 +390,8 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
         scanError: null,
       });
 
-      void replaceCachedBreaches(sortedResults);
-      void replaceCredentials(toStoredCredentials(get().credentials));
+      persistBreachCacheAsync(sortedResults);
+      persistCredentialsAsync(toStoredCredentials(get().credentials));
 
       // Update the dashboard store with the count
       useDashboardStore.getState().updateDashboardData({
@@ -330,7 +427,7 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
         scanError: `${message} Please try again.`,
       });
 
-      void replaceCachedBreaches([]);
+      persistBreachCacheAsync([]);
       useDashboardStore.getState().updateDashboardData({
         activeBreachesCount: 0,
       });

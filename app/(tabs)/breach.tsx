@@ -144,18 +144,32 @@ export default function BreachScreen() {
     return progressById;
   }, [breachStore.breaches, getSuggestionsForSource, suggestions]);
 
-  useEffect(() => {
+  const resolutionDiffById = useMemo(() => {
     if (breachStore.breaches.length === 0) {
+      return null;
+    }
+
+    const diff: Record<string, boolean> = {};
+    let hasDiff = false;
+
+    for (const breach of breachStore.breaches) {
+      const nextResolved = breachProgressById[breach.id]?.isSecured ?? false;
+      if (Boolean(breach.resolved) !== nextResolved) {
+        diff[breach.id] = nextResolved;
+        hasDiff = true;
+      }
+    }
+
+    return hasDiff ? diff : null;
+  }, [breachStore.breaches, breachProgressById]);
+
+  useEffect(() => {
+    if (!resolutionDiffById) {
       return;
     }
 
-    const resolutionById: Record<string, boolean> = {};
-    for (const breach of breachStore.breaches) {
-      resolutionById[breach.id] = breachProgressById[breach.id]?.isSecured ?? false;
-    }
-
-    syncBreachResolutionFromSuggestions(resolutionById);
-  }, [breachProgressById, breachStore.breaches, syncBreachResolutionFromSuggestions]);
+    syncBreachResolutionFromSuggestions(resolutionDiffById);
+  }, [resolutionDiffById, syncBreachResolutionFromSuggestions]);
 
   const handleViewMoreBreaches = () => {
     setVisibleCountByFilter((prev) => {

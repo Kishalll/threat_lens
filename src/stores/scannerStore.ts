@@ -36,14 +36,17 @@ export const useScannerStore = create<ScannerState>()((set, get) => ({
 
       // Update Dashboard score metrics
       const dash = useDashboardStore.getState();
+      if (result.classification !== "UNAVAILABLE") {
+        dash.recordScannedMessage({
+          id: result.id,
+          riskType: result.classification,
+          totalSuggestions: result.suggestedActions.length,
+          actedSuggestions: 0,
+        });
+      }
+
       dash.updateDashboardData((state) => ({
-        totalMessagesScanCount: state.totalMessagesScanCount + 1,
-        flaggedMessagesScanCount:
-          result.classification === "SPAM" ||
-          result.classification === "SCAM" ||
-          result.classification === "PHISHING"
-            ? state.flaggedMessagesScanCount + 1
-            : state.flaggedMessagesScanCount,
+        lastUpdateTimestamp: state.lastUpdateTimestamp,
       }));
 
       dash.registerSuggestions("scan", result.id, result.suggestedActions, {

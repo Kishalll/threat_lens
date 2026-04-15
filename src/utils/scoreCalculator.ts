@@ -1,56 +1,80 @@
 export interface ScoreInputs {
   activeBreachesCount: number;
-  totalMessagesScanCount: number; // kept for compatibility (not used)
-  flaggedMessagesScanCount: number; // kept for compatibility (not used)
   protectedImagesCount: number;
+  scannedMessages: {
+    id: string;
+    riskType: "SAFE" | "SCAM" | "PHISHING" | "SPAM";
+    totalSuggestions: number;
+    actedSuggestions: number;
+  }[];
+}
+
+export interface ScannedMessage {
+  id: string;
+  riskType: "SAFE" | "SCAM" | "PHISHING" | "SPAM";
   totalSuggestions: number;
   actedSuggestions: number;
 }
 
+type RiskType = ScannedMessage["riskType"];
+
 const BASE_SCORE = 100;
 
-// ✅ CAPPED BREACH PENALTY
 function getBreachPenalty(count: number): number {
-  if (count === 0) return 0;
-  if (count <= 2) return 10;
-  if (count <= 5) return 20;
-  if (count <= 10) return 30;
-  return 40; // max penalty
+  if (count <= 0) return 0;
+  return 15 + Math.max(0, count - 1) * 6;
 }
 
-const MAX_SUGGESTION_BONUS = 20;
+function getRiskPenalty(type: RiskType): number {
+  switch (type) {
+    case "SCAM":
+      return 3;
+    case "PHISHING":
+      return 5;
+    case "SPAM":
+      return 2;
+    case "SAFE":
+      return 0;
+  }
+}
+
 const IMAGE_BONUS_PER_PROTECTION = 3;
 const MAX_IMAGE_BONUS = 15;
 
 function clampScore(value: number): number {
-  if (value < 0) return 0;
+  if (value < 10) return 10;
   if (value > 100) return 100;
   return value;
 }
 
-export function calculateSafetyScore(inputs: ScoreInputs): number {
-  const activeBreachesCount = Math.max(0, inputs.activeBreachesCount);
+function calculateMessageImpact(message: ScannedMessage): number {
+  const penalty = getRiskPenalty(message.riskType);
+  if (penalty === 0) {
+    return 0;
+  }
 
-  const totalSuggestions = Math.max(0, inputs.totalSuggestions);
+  const totalSuggestions = Math.max(1, Math.floor(message.totalSuggestions));
   const actedSuggestions = Math.min(
-    Math.max(0, inputs.actedSuggestions),
+    Math.max(0, Math.floor(message.actedSuggestions)),
     totalSuggestions
   );
 
-  const protectedImagesCount = Math.max(0, inputs.protectedImagesCount);
+  const recovery = (actedSuggestions / totalSuggestions) * penalty;
+  return penalty - recovery;
+}
 
-  // 🧠 Behavior-based scoring
+export function calculateSafetyScore(inputs: ScoreInputs): number {
+  const activeBreachesCount = Math.max(0, Math.floor(inputs.activeBreachesCount));
+  const protectedImagesCount = Math.max(0, Math.floor(inputs.protectedImagesCount));
+
   let score = BASE_SCORE;
 
-  // 🔴 Breach penalty (CAPPED)
   score -= getBreachPenalty(activeBreachesCount);
 
-  // 🟢 Suggestions bonus
-  if (totalSuggestions > 0) {
-    score += (actedSuggestions / totalSuggestions) * MAX_SUGGESTION_BONUS;
+  for (const message of inputs.scannedMessages) {
+    score -= calculateMessageImpact(message);
   }
 
-  // 🟢 Image protection bonus
   score += Math.min(
     protectedImagesCount * IMAGE_BONUS_PER_PROTECTION,
     MAX_IMAGE_BONUS
