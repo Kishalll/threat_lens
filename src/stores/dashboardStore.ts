@@ -53,6 +53,33 @@ function getScannedMessagesFromState(state: DashboardState): ScannedMessage[] {
   });
 }
 
+function getBreachActionProgressFromSuggestions(
+  suggestions: TrackedSuggestion[]
+): { totalSuggestions: number; actedSuggestions: number } {
+  const actionableSuggestions = suggestions.filter(
+    (suggestion) => suggestion.source === "breach" && !suggestion.isFallback
+  );
+
+  return {
+    totalSuggestions: actionableSuggestions.length,
+    actedSuggestions: actionableSuggestions.filter((suggestion) => suggestion.acted).length,
+  };
+}
+
+function calculateScoreFromState(
+  state: Pick<
+    DashboardState,
+    "activeBreachesCount" | "protectedImagesCount" | "scannedMessages" | "suggestions"
+  >
+): number {
+  return calculateSafetyScore({
+    activeBreachesCount: state.activeBreachesCount,
+    protectedImagesCount: state.protectedImagesCount,
+    scannedMessages: state.scannedMessages,
+    breachActionProgress: getBreachActionProgressFromSuggestions(state.suggestions),
+  });
+}
+
 export interface DashboardState {
   activeBreachesCount: number;
   protectedImagesCount: number;
@@ -102,11 +129,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         ...patch,
         lastUpdateTimestamp: Date.now(),
       };
-      const score = calculateSafetyScore({
-        activeBreachesCount: nextState.activeBreachesCount,
-        protectedImagesCount: nextState.protectedImagesCount,
-        scannedMessages: nextState.scannedMessages,
-      });
+      const score = calculateScoreFromState(nextState);
 
       return {
         ...nextState,
@@ -132,12 +155,9 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     }
 
     set((state) => {
-      const baseSuggestions = options?.replaceExisting
-        ? state.suggestions.filter(
-            (suggestion) =>
-              !(suggestion.source === source && suggestion.sourceId === sourceId)
-          )
-        : state.suggestions;
+      const existingForSource = state.suggestions.filter(
+        (suggestion) => suggestion.source === source && suggestion.sourceId === sourceId
+      );
 
       const uniqueIncoming = Array.from(
         new Set(normalized.map((text) => text.toLowerCase()))
@@ -147,13 +167,81 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       );
 
       const existingTextSet = new Set(
-        baseSuggestions
-          .filter(
-            (suggestion) =>
-              suggestion.source === source && suggestion.sourceId === sourceId
-          )
-          .map((suggestion) => suggestion.text.toLowerCase())
+        existingForSource.map((suggestion) => suggestion.text.toLowerCase())
       );
+
+      if (options?.replaceExisting) {
+        const existingByText = new Map(
+          existingForSource.map((suggestion) => [
+            suggestion.text.toLowerCase(),
+            suggestion,
+          ])
+        );
+
+        const replacementSuggestions: TrackedSuggestion[] = uniqueIncoming.map(
+          (text, index) => {
+            const existing = existingByText.get(text.toLowerCase());
+            if (existing) {
+              return {
+                ...existing,
+                text,
+                isFallback: options?.isFallback === true,
+              };
+            }
+
+            return {
+              id: `${source}-${sourceId}-${Date.now()}-${index}`,
+              text,
+              acted: false,
+              isFallback: options?.isFallback === true,
+              source,
+              sourceId,
+            };
+          }
+        );
+
+        const noSourceChange =
+          replacementSuggestions.length === existingForSource.length &&
+          replacementSuggestions.every((suggestion, index) => {
+            const current = existingForSource[index];
+            return (
+              current?.id === suggestion.id &&
+              current?.text === suggestion.text &&
+              current?.acted === suggestion.acted &&
+              current?.isFallback === suggestion.isFallback
+            );
+          });
+
+        if (noSourceChange) {
+          return state;
+        }
+
+        const suggestions = [
+          ...state.suggestions.filter(
+            (suggestion) =>
+              !(suggestion.source === source && suggestion.sourceId === sourceId)
+          ),
+          ...replacementSuggestions,
+        ];
+        const scannedMessages = getScannedMessagesFromState({
+          ...state,
+          suggestions,
+        });
+        const score = calculateScoreFromState({
+          ...state,
+          suggestions,
+          scannedMessages,
+        });
+
+        return {
+          ...state,
+          suggestions,
+          scannedMessages,
+          lastUpdateTimestamp: Date.now(),
+          SafetyScore: score,
+          ScoreColor: getScoreColor(score),
+        };
+      }
 
       const additions: TrackedSuggestion[] = uniqueIncoming
         .filter((text) => !existingTextSet.has(text.toLowerCase()))
@@ -166,18 +254,18 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
           sourceId,
         }));
 
-      if (additions.length === 0 && !options?.replaceExisting) {
+      if (additions.length === 0) {
         return state;
       }
 
-      const suggestions = [...baseSuggestions, ...additions];
+      const suggestions = [...state.suggestions, ...additions];
       const scannedMessages = getScannedMessagesFromState({
         ...state,
         suggestions,
       });
-      const score = calculateSafetyScore({
-        activeBreachesCount: state.activeBreachesCount,
-        protectedImagesCount: state.protectedImagesCount,
+      const score = calculateScoreFromState({
+        ...state,
+        suggestions,
         scannedMessages,
       });
 
@@ -202,9 +290,8 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
             )
           : [...state.scannedMessages, message];
 
-      const score = calculateSafetyScore({
-        activeBreachesCount: state.activeBreachesCount,
-        protectedImagesCount: state.protectedImagesCount,
+      const score = calculateScoreFromState({
+        ...state,
         scannedMessages,
       });
 
@@ -232,9 +319,9 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         ...state,
         suggestions,
       });
-      const score = calculateSafetyScore({
-        activeBreachesCount: state.activeBreachesCount,
-        protectedImagesCount: state.protectedImagesCount,
+      const score = calculateScoreFromState({
+        ...state,
+        suggestions,
         scannedMessages,
       });
 
@@ -257,11 +344,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
   refreshScore: () => {
     const s = get();
-    const score = calculateSafetyScore({
-      activeBreachesCount: s.activeBreachesCount,
-      protectedImagesCount: s.protectedImagesCount,
-      scannedMessages: s.scannedMessages,
-    });
+    const score = calculateScoreFromState(s);
     set({ SafetyScore: score, ScoreColor: getScoreColor(score) });
   },
 }));

@@ -7,6 +7,10 @@ export interface ScoreInputs {
     totalSuggestions: number;
     actedSuggestions: number;
   }[];
+  breachActionProgress?: {
+    totalSuggestions: number;
+    actedSuggestions: number;
+  };
 }
 
 export interface ScannedMessage {
@@ -63,13 +67,36 @@ function calculateMessageImpact(message: ScannedMessage): number {
   return penalty - recovery;
 }
 
-export function calculateSafetyScore(inputs: ScoreInputs): number {
+function calculateBreachImpact(inputs: ScoreInputs): number {
   const activeBreachesCount = Math.max(0, Math.floor(inputs.activeBreachesCount));
+  const basePenalty = getBreachPenalty(activeBreachesCount);
+  if (basePenalty === 0) {
+    return 0;
+  }
+
+  const totalSuggestions = Math.max(
+    0,
+    Math.floor(inputs.breachActionProgress?.totalSuggestions ?? 0)
+  );
+  if (totalSuggestions === 0) {
+    return basePenalty;
+  }
+
+  const actedSuggestions = Math.min(
+    Math.max(0, Math.floor(inputs.breachActionProgress?.actedSuggestions ?? 0)),
+    totalSuggestions
+  );
+  const recoveryRatio = actedSuggestions / totalSuggestions;
+
+  return basePenalty * (1 - recoveryRatio);
+}
+
+export function calculateSafetyScore(inputs: ScoreInputs): number {
   const protectedImagesCount = Math.max(0, Math.floor(inputs.protectedImagesCount));
 
   let score = BASE_SCORE;
 
-  score -= getBreachPenalty(activeBreachesCount);
+  score -= calculateBreachImpact(inputs);
 
   for (const message of inputs.scannedMessages) {
     score -= calculateMessageImpact(message);

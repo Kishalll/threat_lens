@@ -36,16 +36,21 @@ function validateCredentialInput(value: string): string | null {
     : "Username must be at least 3 characters";
 }
 
-function buildProgress(actedSuggestions: number, totalSuggestions: number): BreachActionProgress {
+function buildProgress(
+  actedSuggestions: number,
+  totalSuggestions: number,
+  currentResolved: boolean
+): BreachActionProgress {
   const total = Math.max(0, totalSuggestions);
   const acted = Math.min(Math.max(0, actedSuggestions), total);
-  const ratio = total === 0 ? 0 : acted / total;
+  const ratio = total === 0 ? (currentResolved ? 1 : 0) : acted / total;
 
   return {
     totalSuggestions: total,
     actedSuggestions: acted,
     ratio,
-    isSecured: total > 0 && acted === total,
+    // Keep existing resolved state when there are no actionable suggestions.
+    isSecured: total === 0 ? currentResolved : acted === total,
   };
 }
 
@@ -137,7 +142,8 @@ export default function BreachScreen() {
 
       progressById[breach.id] = buildProgress(
         actionableSuggestions.filter((suggestion) => suggestion.acted).length,
-        actionableSuggestions.length
+        actionableSuggestions.length,
+        Boolean(breach.resolved)
       );
     }
 
@@ -153,7 +159,12 @@ export default function BreachScreen() {
     let hasDiff = false;
 
     for (const breach of breachStore.breaches) {
-      const nextResolved = breachProgressById[breach.id]?.isSecured ?? false;
+      const progress = breachProgressById[breach.id];
+      if (!progress || progress.totalSuggestions === 0) {
+        continue;
+      }
+
+      const nextResolved = progress.isSecured;
       if (Boolean(breach.resolved) !== nextResolved) {
         diff[breach.id] = nextResolved;
         hasDiff = true;
