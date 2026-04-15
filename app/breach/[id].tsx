@@ -7,6 +7,14 @@ import { generateBreachGuidance } from "../../src/services/geminiService";
 import { useDashboardStore } from "../../src/stores/dashboardStore";
 import { THEME } from "../../src/constants/theme";
 
+const FALLBACK_GUIDANCE_PATTERNS = [
+  "ai guidance unavailable",
+  "temporarily unavailable",
+  "quota",
+  "retry",
+  "api key",
+];
+
 function parseGuidanceSuggestions(guidance: string): string[] {
   const lines = guidance
     .split(/\r?\n/)
@@ -33,23 +41,40 @@ function parseGuidanceSuggestions(guidance: string): string[] {
   return unique;
 }
 
+function isFallbackGuidance(guidance: string): boolean {
+  const normalized = guidance.toLowerCase();
+  return FALLBACK_GUIDANCE_PATTERNS.some((pattern) => normalized.includes(pattern));
+}
+
 export default function BreachDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const breachStore = useBreachStore();
   const suggestions = useDashboardStore((state) => state.suggestions);
+  const getSuggestionsForSource = useDashboardStore((state) => state.getSuggestionsForSource);
   const registerSuggestions = useDashboardStore((state) => state.registerSuggestions);
   const markSuggestionAsDone = useDashboardStore((state) => state.markSuggestionAsDone);
+  const syncBreachResolutionFromSuggestions = useBreachStore(
+    (state) => state.syncBreachResolutionFromSuggestions
+  );
   
   const breach = breachStore.breaches.find(b => b.id === id);
   const breachSuggestions = useMemo(
-    () =>
-      suggestions.filter(
-        (suggestion) =>
-          suggestion.source === "breach" && suggestion.sourceId === (breach?.id ?? "")
-      ),
-    [suggestions, breach?.id]
+    () => getSuggestionsForSource("breach", breach?.id ?? ""),
+    [breach?.id, getSuggestionsForSource, suggestions]
   );
+  const actionableSuggestions = useMemo(
+    () => breachSuggestions.filter((suggestion) => !suggestion.isFallback),
+    [breachSuggestions]
+  );
+  const actedSuggestionsCount = useMemo(
+    () => actionableSuggestions.filter((suggestion) => suggestion.acted).length,
+    [actionableSuggestions]
+  );
+  const totalSuggestionsCount = actionableSuggestions.length;
+  const progressRatio =
+    totalSuggestionsCount === 0 ? 0 : actedSuggestionsCount / totalSuggestionsCount;
+  const isSecured = totalSuggestionsCount > 0 && actedSuggestionsCount === totalSuggestionsCount;
   
   const [guidance, setGuidance] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
@@ -78,8 +103,20 @@ export default function BreachDetailScreen() {
       return;
     }
 
-    registerSuggestions("breach", breach.id, parseGuidanceSuggestions(guidance));
+    registerSuggestions("breach", breach.id, parseGuidanceSuggestions(guidance), {
+      isFallback: isFallbackGuidance(guidance),
+    });
   }, [breach, guidance, loading, registerSuggestions]);
+
+  useEffect(() => {
+    if (!breach) {
+      return;
+    }
+
+    syncBreachResolutionFromSuggestions({
+      [breach.id]: isSecured,
+    });
+  }, [breach, isSecured, syncBreachResolutionFromSuggestions]);
 
   if (!breach) {
     return (
@@ -99,11 +136,11 @@ export default function BreachDetailScreen() {
         <Text style={styles.backTitle}>Back</Text>
       </Pressable>
 
-      <View style={[styles.headerCard, breach.resolved && styles.headerCardResolved]}>
+      <View style={[styles.headerCard, isSecured && styles.headerCardResolved]}>
         <Feather
-          name={breach.resolved ? "check-circle" : "alert-triangle"}
+          name={isSecured ? "check-circle" : "alert-triangle"}
           size={32}
-          color={breach.resolved ? "#4ADE80" : "#F87171"}
+          color={isSecured ? THEME.colors.accent : THEME.colors.danger}
           style={{marginBottom: 12}}
         />
         <Text style={styles.title}>{breach.name}</Text>
@@ -113,16 +150,20 @@ export default function BreachDetailScreen() {
             Matched {breach.matchedCredentialType ?? "credential"}: {breach.matchedCredential}
           </Text>
         )}
-        {!breach.resolved ? (
-          <Pressable
-            style={({ pressed }) => [styles.secureButton, pressed && styles.pressedButton]}
-            onPress={() => breachStore.markBreachAsResolved(breach.id)}
-          >
-            <Text style={styles.secureButtonText}>Mark as Secured</Text>
-          </Pressable>
-        ) : (
-          <Text style={styles.securedLabel}>This breach is marked as secured.</Text>
-        )}
+        <Text style={[styles.statusText, isSecured ? styles.securedLabel : styles.riskLabel]}>
+          {isSecured ? "Secured" : "At Risk"}
+        </Text>
+        <View style={styles.progressTrack}>
+          <View
+            style={[
+              styles.progressFill,
+              { width: `${Math.round(progressRatio * 100)}%` },
+            ]}
+          />
+        </View>
+        <Text style={styles.progressText}>
+          {actedSuggestionsCount} of {totalSuggestionsCount} actions completed
+        </Text>
       </View>
 
       <Text style={styles.sectionTitle}>What was leaked?</Text>
@@ -148,23 +189,25 @@ export default function BreachDetailScreen() {
           breachSuggestions.map((suggestion) => (
             <View key={suggestion.id} style={styles.suggestionRow}>
               <Text style={styles.guidanceText}>{suggestion.text}</Text>
-              <Pressable
-                style={[
-                  styles.doneButton,
-                  suggestion.acted && styles.doneButtonCompleted,
-                ]}
-                onPress={() => markSuggestionAsDone(suggestion.id)}
-                disabled={suggestion.acted}
-              >
-                <Text
+              {!suggestion.isFallback ? (
+                <Pressable
                   style={[
-                    styles.doneButtonText,
-                    suggestion.acted && styles.doneButtonTextCompleted,
+                    styles.doneButton,
+                    suggestion.acted && styles.doneButtonCompleted,
                   ]}
+                  onPress={() => markSuggestionAsDone(suggestion.id)}
+                  disabled={suggestion.acted}
                 >
-                  {suggestion.acted ? "Done" : "Mark as Done"}
-                </Text>
-              </Pressable>
+                  <Text
+                    style={[
+                      styles.doneButtonText,
+                      suggestion.acted && styles.doneButtonTextCompleted,
+                    ]}
+                  >
+                    {suggestion.acted ? "Done" : "Mark as Done"}
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           ))
         ) : (
@@ -240,26 +283,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 10,
   },
-  secureButton: {
-    borderColor: THEME.colors.accent,
-    borderWidth: 1,
-    borderRadius: THEME.radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  statusText: {
     marginTop: 12,
-    backgroundColor: `${THEME.colors.accent}22`,
-  },
-  secureButtonText: {
-    color: THEME.colors.accent,
     fontFamily: THEME.fontFamily.dmSans,
     fontSize: 13,
     fontWeight: "700",
   },
   securedLabel: {
     color: THEME.colors.accent,
+  },
+  riskLabel: {
+    color: THEME.colors.danger,
+  },
+  progressTrack: {
+    marginTop: 10,
+    width: "100%",
+    height: 6,
+    borderRadius: THEME.radius.pill,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: THEME.radius.pill,
+    backgroundColor: THEME.colors.accent,
+  },
+  progressText: {
+    marginTop: 8,
+    color: THEME.colors.textSecondary,
     fontFamily: THEME.fontFamily.dmSans,
-    fontSize: 13,
-    marginTop: 12,
+    fontSize: 12,
   },
   sectionTitle: {
     color: THEME.colors.textPrimary,

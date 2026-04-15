@@ -3,16 +3,62 @@ import { StyleSheet, View, Text, ScrollView, Pressable, TextInput, ActivityIndic
 import { useRouter } from "expo-router";
 import Feather from "@expo/vector-icons/Feather";
 import { useBreachStore } from "../../src/stores/breachStore";
+import { useDashboardStore } from "../../src/stores/dashboardStore";
 import { THEME } from "../../src/constants/theme";
 
 const ALL_FILTER = "__ALL__";
 const BREACH_PAGE_SIZE = 10;
 const AUTO_COLLAPSE_MS = 45_000;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+type BreachActionProgress = {
+  totalSuggestions: number;
+  actedSuggestions: number;
+  ratio: number;
+  isSecured: boolean;
+};
+
+function validateCredentialInput(value: string): string | null {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.includes("@")) {
+    return EMAIL_REGEX.test(normalized)
+      ? null
+      : "Enter a valid email address";
+  }
+
+  return normalized.length >= 3
+    ? null
+    : "Username must be at least 3 characters";
+}
+
+function buildProgress(actedSuggestions: number, totalSuggestions: number): BreachActionProgress {
+  const total = Math.max(0, totalSuggestions);
+  const acted = Math.min(Math.max(0, actedSuggestions), total);
+  const ratio = total === 0 ? 0 : acted / total;
+
+  return {
+    totalSuggestions: total,
+    actedSuggestions: acted,
+    ratio,
+    isSecured: total > 0 && acted === total,
+  };
+}
 
 export default function BreachScreen() {
   const router = useRouter();
   const breachStore = useBreachStore();
+  const suggestions = useDashboardStore((state) => state.suggestions);
+  const getSuggestionsForSource = useDashboardStore((state) => state.getSuggestionsForSource);
+  const syncBreachResolutionFromSuggestions = useBreachStore(
+    (state) => state.syncBreachResolutionFromSuggestions
+  );
   const [newEmail, setNewEmail] = useState("");
+  const [inputError, setInputError] = useState<string | null>(null);
   const [selectedCredentialFilter, setSelectedCredentialFilter] = useState<string>(ALL_FILTER);
   const [visibleCountByFilter, setVisibleCountByFilter] = useState<Record<string, number>>({});
   const collapseTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -80,6 +126,37 @@ export default function BreachScreen() {
   );
   const hiddenBreachesCount = Math.max(filteredBreaches.length - visibleBreaches.length, 0);
 
+  const breachProgressById = useMemo(() => {
+    const progressById: Record<string, BreachActionProgress> = {};
+
+    for (const breach of breachStore.breaches) {
+      const breachSuggestions = getSuggestionsForSource("breach", breach.id);
+      const actionableSuggestions = breachSuggestions.filter(
+        (suggestion) => !suggestion.isFallback
+      );
+
+      progressById[breach.id] = buildProgress(
+        actionableSuggestions.filter((suggestion) => suggestion.acted).length,
+        actionableSuggestions.length
+      );
+    }
+
+    return progressById;
+  }, [breachStore.breaches, getSuggestionsForSource, suggestions]);
+
+  useEffect(() => {
+    if (breachStore.breaches.length === 0) {
+      return;
+    }
+
+    const resolutionById: Record<string, boolean> = {};
+    for (const breach of breachStore.breaches) {
+      resolutionById[breach.id] = breachProgressById[breach.id]?.isSecured ?? false;
+    }
+
+    syncBreachResolutionFromSuggestions(resolutionById);
+  }, [breachProgressById, breachStore.breaches, syncBreachResolutionFromSuggestions]);
+
   const handleViewMoreBreaches = () => {
     setVisibleCountByFilter((prev) => {
       const current = prev[activeFilterKey] ?? BREACH_PAGE_SIZE;
@@ -95,14 +172,26 @@ export default function BreachScreen() {
   };
 
   const handleAddCredential = () => {
-    if (newEmail.trim().length > 3) {
-      breachStore.addCredential(newEmail.trim(), newEmail.includes("@") ? "email" : "username");
-      setNewEmail("");
+    const value = newEmail.trim();
+    const validationError = validateCredentialInput(value);
+
+    if (validationError) {
+      setInputError(validationError);
+      return;
     }
+
+    if (!value) {
+      return;
+    }
+
+    breachStore.addCredential(value, value.includes("@") ? "email" : "username");
+    setNewEmail("");
+    setInputError(null);
   };
 
-  const handleMarkAsSecured = (id: string) => {
-    breachStore.markBreachAsResolved(id);
+  const handleCredentialInputChange = (value: string) => {
+    setNewEmail(value);
+    setInputError(validateCredentialInput(value));
   };
 
   return (
@@ -111,17 +200,18 @@ export default function BreachScreen() {
       
       <View style={styles.addSection}>
         <TextInput
-          style={styles.input}
+          style={[styles.input, inputError ? styles.inputErrorBorder : null]}
           placeholder="Add email or username to monitor"
           placeholderTextColor="#8B8F99"
           value={newEmail}
-          onChangeText={setNewEmail}
+          onChangeText={handleCredentialInputChange}
           autoCapitalize="none"
         />
         <Pressable style={styles.addButton} onPress={handleAddCredential}>
           <Feather name="plus" size={22} color="#0A0F14" />
         </Pressable>
       </View>
+      {inputError ? <Text style={styles.inputErrorText}>{inputError}</Text> : null}
 
       <ScrollView style={styles.listContainer}>
         <View style={styles.sectionHeader}>
@@ -207,14 +297,18 @@ export default function BreachScreen() {
           visibleBreaches.map((breach) => (
             <Pressable 
               key={breach.id} 
-              style={({ pressed }) => [styles.breachCard, breach.resolved && styles.breachCardResolved, pressed && styles.pressedButton]}
+              style={({ pressed }) => [
+                styles.breachCard,
+                breachProgressById[breach.id]?.isSecured && styles.breachCardResolved,
+                pressed && styles.pressedButton,
+              ]}
               onPress={() => router.push(`/breach/${breach.id}`)}
             >
               <View style={styles.breachHeader}>
                 <Feather
-                  name={breach.resolved ? "check-circle" : "alert-triangle"}
+                  name={breachProgressById[breach.id]?.isSecured ? "check-circle" : "alert-triangle"}
                   size={20}
-                  color={breach.resolved ? "#4ADE80" : "#F87171"}
+                  color={breachProgressById[breach.id]?.isSecured ? THEME.colors.accent : THEME.colors.danger}
                   style={{ marginRight: 8 }}
                 />
                 <Text style={styles.breachName}>{breach.name}</Text>
@@ -228,19 +322,30 @@ export default function BreachScreen() {
               <Text style={styles.breachDataTypes}>
                 Leaked: {breach.dataClasses.join(", ")}
               </Text>
-              {!breach.resolved ? (
-                <Pressable
-                  style={({ pressed }) => [styles.secureButton, pressed && styles.pressedButton]}
-                  onPress={(event) => {
-                    event.stopPropagation();
-                    handleMarkAsSecured(breach.id);
-                  }}
-                >
-                  <Text style={styles.secureButtonText}>Mark as Secured</Text>
-                </Pressable>
-              ) : (
-                <Text style={styles.securedLabel}>Secured</Text>
-              )}
+              <Text
+                style={[
+                  styles.statusText,
+                  breachProgressById[breach.id]?.isSecured
+                    ? styles.securedLabel
+                    : styles.riskLabel,
+                ]}
+              >
+                {breachProgressById[breach.id]?.isSecured ? "Secured" : "At Risk"}
+              </Text>
+              <View style={styles.progressTrack}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    {
+                      width: `${Math.round((breachProgressById[breach.id]?.ratio ?? 0) * 100)}%`,
+                    },
+                  ]}
+                />
+              </View>
+              <Text style={styles.progressText}>
+                {(breachProgressById[breach.id]?.actedSuggestions ?? 0)} of {" "}
+                {(breachProgressById[breach.id]?.totalSuggestions ?? 0)} actions completed
+              </Text>
               <Text style={styles.tapToView}>Tap to view guidance ›</Text>
             </Pressable>
           ))
@@ -284,7 +389,7 @@ const styles = StyleSheet.create({
   addSection: {
     flexDirection: "row",
     gap: 12,
-    marginBottom: 22,
+    marginBottom: 8,
   },
   input: {
     flex: 1,
@@ -307,6 +412,15 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.22,
     shadowRadius: 12,
     elevation: 4,
+  },
+  inputErrorBorder: {
+    borderColor: THEME.colors.danger,
+  },
+  inputErrorText: {
+    color: THEME.colors.danger,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 12,
+    marginBottom: 12,
   },
   listContainer: {
     flex: 1,
@@ -427,30 +541,37 @@ const styles = StyleSheet.create({
     color: THEME.colors.warning,
     fontFamily: THEME.fontFamily.dmSans,
     fontSize: 14,
-    marginBottom: 8,
+    marginBottom: 10,
   },
-  secureButton: {
-    alignSelf: "flex-start",
-    borderColor: THEME.colors.accent,
-    borderWidth: 1,
-    borderRadius: THEME.radius.sm,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginBottom: 8,
-    backgroundColor: `${THEME.colors.accent}1A`,
-  },
-  secureButtonText: {
-    color: THEME.colors.accent,
+  statusText: {
     fontFamily: THEME.fontFamily.dmSans,
     fontSize: 12,
     fontWeight: "700",
+    marginBottom: 8,
   },
   securedLabel: {
     color: THEME.colors.accent,
+  },
+  riskLabel: {
+    color: THEME.colors.danger,
+  },
+  progressTrack: {
+    height: 6,
+    borderRadius: THEME.radius.pill,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    overflow: "hidden",
+    marginBottom: 6,
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: THEME.radius.pill,
+    backgroundColor: THEME.colors.accent,
+  },
+  progressText: {
+    color: THEME.colors.textSecondary,
     fontFamily: THEME.fontFamily.dmSans,
     fontSize: 12,
-    fontWeight: "700",
-    marginBottom: 8,
+    marginBottom: 10,
   },
   tapToView: {
     color: THEME.colors.accent,

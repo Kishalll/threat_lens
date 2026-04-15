@@ -11,6 +11,7 @@ export default function ScannerScreen() {
   const scannerStore = useScannerStore();
   const [textToScan, setTextToScan] = useState("");
   const [scanError, setScanError] = useState<string | null>(null);
+  const [lastFailedInput, setLastFailedInput] = useState<string>("");
 
   useEffect(() => {
     const rawPrefill = Array.isArray(prefill) ? prefill[0] : prefill;
@@ -20,13 +21,26 @@ export default function ScannerScreen() {
     }
   }, [prefill]);
 
-  const handleScan = async () => {
-    if (textToScan.trim().length === 0) return;
+  const handleScan = async (retryText?: string) => {
+    const input = (retryText ?? textToScan).trim();
+    if (input.length === 0) return;
 
     setScanError(null);
 
     try {
-      const result = await scannerStore.scanManualText(textToScan.trim());
+      const result = await scannerStore.scanManualText(input);
+
+      if (result.classification === "UNAVAILABLE") {
+        setLastFailedInput(input);
+        setScanError(
+          result.explanation.trim().length > 0
+            ? result.explanation
+            : "AI quota exceeded or temporarily unavailable. Please try again."
+        );
+        return;
+      }
+
+      setLastFailedInput("");
       setTextToScan("");
       router.push({ pathname: "/scan/result", params: { id: result.id } });
     } catch (error) {
@@ -39,6 +53,7 @@ export default function ScannerScreen() {
           ? error.message
           : "Message analysis failed. Please try again.";
       setScanError(message);
+      setLastFailedInput(input);
     }
   };
 
@@ -85,7 +100,9 @@ export default function ScannerScreen() {
             (textToScan.trim().length === 0 || scannerStore.isScanning) && styles.disabledButton,
             pressed && styles.pressedButton,
           ]}
-          onPress={handleScan}
+          onPress={() => {
+            void handleScan();
+          }}
           disabled={textToScan.trim().length === 0 || scannerStore.isScanning}
         >
           {scannerStore.isScanning ? (
@@ -103,6 +120,17 @@ export default function ScannerScreen() {
         ) : null}
 
         {scanError ? <Text style={styles.errorText}>{scanError}</Text> : null}
+        {scanError && lastFailedInput && !scannerStore.isScanning ? (
+          <Pressable
+            style={({ pressed }) => [styles.retryButton, pressed && styles.pressedButton]}
+            onPress={() => {
+              void handleScan(lastFailedInput);
+            }}
+          >
+            <Feather name="rotate-ccw" size={16} color={THEME.colors.textPrimary} />
+            <Text style={styles.retryButtonText}>Try Again</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <Text style={styles.sectionTitle}>Scan History</Text>
@@ -277,6 +305,25 @@ const styles = StyleSheet.create({
     color: THEME.colors.danger,
     fontFamily: THEME.fontFamily.dmSans,
     marginTop: 10,
+  },
+  retryButton: {
+    marginTop: 10,
+    alignSelf: "flex-start",
+    backgroundColor: THEME.colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: THEME.colors.borderStrong,
+    borderRadius: THEME.radius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  retryButtonText: {
+    color: THEME.colors.textPrimary,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 13,
+    fontWeight: "700",
   },
   pressedButton: {
     transform: [{ scale: 0.985 }],

@@ -30,6 +30,7 @@ export interface BreachState {
   addCredential: (value: string, type: "email" | "username") => void;
   removeCredential: (id: string) => void;
   markBreachAsResolved: (id: string) => void;
+  syncBreachResolutionFromSuggestions: (resolutionById: Record<string, boolean>) => void;
   runScan: (options?: { notifyOnNew?: boolean }) => Promise<void>;
   hydrateFromStorage: () => Promise<void>;
 }
@@ -176,6 +177,48 @@ export const useBreachStore = create<BreachState>()((set, get) => ({
       return {
         ...state,
         breaches,
+      };
+    });
+
+    if (didUpdate) {
+      useDashboardStore.getState().updateDashboardData({
+        activeBreachesCount: nextActiveBreachesCount,
+      });
+    }
+  },
+
+  syncBreachResolutionFromSuggestions: (resolutionById) => {
+    let didUpdate = false;
+    let nextActiveBreachesCount = 0;
+
+    set((state) => {
+      const nextBreaches = state.breaches.map((breach) => {
+        const nextResolved = resolutionById[breach.id];
+        if (typeof nextResolved !== "boolean") {
+          return breach;
+        }
+
+        if (Boolean(breach.resolved) === nextResolved) {
+          return breach;
+        }
+
+        didUpdate = true;
+        return {
+          ...breach,
+          resolved: nextResolved,
+        };
+      });
+
+      if (!didUpdate) {
+        return state;
+      }
+
+      nextActiveBreachesCount = countActiveBreaches(nextBreaches);
+      void replaceCachedBreaches(nextBreaches);
+
+      return {
+        ...state,
+        breaches: nextBreaches,
       };
     });
 
