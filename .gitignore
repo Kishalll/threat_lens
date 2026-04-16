@@ -46,3 +46,12 @@ yarn-error.*
 *.iml
 
 .env
+
+# setup outputs
+.setup/
+scripts/setup/*.local.ps1
+registry_api_key.txt
+
+# python cache
+__pycache__/
+*.pyc

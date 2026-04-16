@@ -1,281 +1,577 @@
-import React, { useRef, useState } from "react";
-import { StyleSheet, View, Text, Pressable, Image, ActivityIndicator, Alert, TouchableOpacity } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  StyleSheet,
+  View,
+  Text,
+  Pressable,
+  Image,
+  ActivityIndicator,
+  Alert,
+  TouchableOpacity,
+  ScrollView,
+  TextInput,
+  Switch,
+} from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
-import * as FileSystem from "expo-file-system/legacy";
 import Feather from "@expo/vector-icons/Feather";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useDashboardStore } from "../../src/stores/dashboardStore";
-import { getCloudFunctionApiKey, getCloudFunctionUrl } from "../../src/services/secureKeyService";
+import {
+  getImageTrustSettingsSnapshot,
+  protectImageWithSignature,
+  verifySignedImage,
+} from "../../src/services/imageTrustService";
+import type {
+  SignedImagePayload,
+  VerificationResult,
+  VerificationStatus,
+} from "../../src/types/imageTrust";
+import {
+  MASTER_PUBLIC_KEY_PEM_KEY_NAME,
+  TRUST_REGISTRY_API_KEY_NAME,
+  TRUST_REGISTRY_BASE_URL_KEY_NAME,
+  getMasterPublicKeyPem,
+  getTrustRegistryApiKey,
+  getTrustRegistryBaseUrl,
+  setKey,
+} from "../../src/services/secureKeyService";
 import { THEME } from "../../src/constants/theme";
 
-type ProcessStep = 'idle' | 'picked' | 'protecting' | 'done' | 'error';
+type ShieldMode = "protect" | "verify" | "settings";
+type ProtectStep = "idle" | "picked" | "signing" | "done" | "error";
+
+const STATUS_META: Record<
+  VerificationStatus,
+  { label: string; color: string; icon: React.ComponentProps<typeof Feather>["name"] }
+> = {
+  AUTHENTIC: { label: "Authentic", color: THEME.colors.accent, icon: "check-circle" },
+  TAMPERED: { label: "Tampered", color: THEME.colors.danger, icon: "alert-triangle" },
+  INVALID_SIGNATURE: {
+    label: "Invalid Signature",
+    color: THEME.colors.danger,
+    icon: "x-octagon",
+  },
+  CLONE_APP: { label: "Clone App", color: THEME.colors.danger, icon: "slash" },
+  REVOKED: { label: "Revoked", color: THEME.colors.warning, icon: "shield-off" },
+  OFFLINE: { label: "Offline", color: THEME.colors.warning, icon: "wifi-off" },
+  NO_PROTECTION: {
+    label: "No Protection",
+    color: THEME.colors.textTertiary,
+    icon: "help-circle",
+  },
+  CORRUPT: { label: "Corrupt", color: THEME.colors.danger, icon: "alert-circle" },
+};
+
+function maskSecret(value: string): string {
+  if (value.length <= 8) {
+    return value;
+  }
+  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+}
 
 export default function ShieldScreen() {
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const [protectedImage, setProtectedImage] = useState<string | null>(null);
-  const [step, setStep] = useState<ProcessStep>('idle');
+  const [mode, setMode] = useState<ShieldMode>("protect");
+
+  const [protectSourceUri, setProtectSourceUri] = useState<string | null>(null);
+  const [signedImageUri, setSignedImageUri] = useState<string | null>(null);
+  const [protectPayload, setProtectPayload] = useState<SignedImagePayload | null>(null);
+  const [protectStep, setProtectStep] = useState<ProtectStep>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const activeRequestController = useRef<AbortController | null>(null);
+
+  const [verifySourceUri, setVerifySourceUri] = useState<string | null>(null);
+  const [verifyResult, setVerifyResult] = useState<VerificationResult | null>(null);
+  const [verifyLoading, setVerifyLoading] = useState<boolean>(false);
+  const [verifyCloudCheck, setVerifyCloudCheck] = useState<boolean>(true);
+
+  const [settingsLoading, setSettingsLoading] = useState<boolean>(true);
+  const [settingsSaving, setSettingsSaving] = useState<boolean>(false);
+  const [registryBaseUrl, setRegistryBaseUrl] = useState<string>("");
+  const [registryApiKey, setRegistryApiKey] = useState<string>("");
+  const [masterPublicPem, setMasterPublicPem] = useState<string>("");
+  const [deviceSnapshot, setDeviceSnapshot] = useState<{
+    installID: string | null;
+    hasDeviceKey: boolean;
+    hasMasterCert: boolean;
+    registerUrl: string | null;
+    verifyUrl: string | null;
+  } | null>(null);
+
   const insets = useSafeAreaInsets();
 
-  const resetState = () => {
-    if (activeRequestController.current) {
-      activeRequestController.current.abort();
-      activeRequestController.current = null;
+  const loadSettings = useCallback(async () => {
+    setSettingsLoading(true);
+    try {
+      const [baseUrl, apiKey, masterPem, snapshot] = await Promise.all([
+        getTrustRegistryBaseUrl(),
+        getTrustRegistryApiKey(),
+        getMasterPublicKeyPem(),
+        getImageTrustSettingsSnapshot(),
+      ]);
+
+      setRegistryBaseUrl(baseUrl ?? "");
+      setRegistryApiKey(apiKey ?? "");
+      setMasterPublicPem(masterPem ?? "");
+      setDeviceSnapshot(snapshot);
+    } finally {
+      setSettingsLoading(false);
     }
-    setSelectedImage(null);
-    setProtectedImage(null);
-    setStep('idle');
+  }, []);
+
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
+
+  const resetProtectState = () => {
+    setProtectSourceUri(null);
+    setSignedImageUri(null);
+    setProtectPayload(null);
+    setProtectStep("idle");
     setErrorMessage(null);
   };
 
-  const pickImage = async () => {
-    let result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: false,
-      quality: 0.5,
-    });
-
-    if (!result.canceled) {
-      setSelectedImage(result.assets[0].uri);
-      setProtectedImage(null);
-      setStep('picked');
-      setErrorMessage(null);
-    }
+  const resetVerifyState = () => {
+    setVerifySourceUri(null);
+    setVerifyResult(null);
+    setErrorMessage(null);
   };
 
-    const processImage = async () => {
-    if (!selectedImage) return;
+  const pickProtectImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: false,
+      quality: 1,
+    });
 
-    setStep('protecting');
+    if (result.canceled || result.assets.length === 0) {
+      return;
+    }
+
+    setProtectSourceUri(result.assets[0].uri);
+    setSignedImageUri(null);
+    setProtectPayload(null);
+    setProtectStep("picked");
+    setErrorMessage(null);
+  };
+
+  const pickVerifyImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: false,
+      quality: 1,
+    });
+
+    if (result.canceled || result.assets.length === 0) {
+      return;
+    }
+
+    setVerifySourceUri(result.assets[0].uri);
+    setVerifyResult(null);
+    setErrorMessage(null);
+  };
+
+  const runProtectFlow = async () => {
+    if (!protectSourceUri) {
+      return;
+    }
+
+    setProtectStep("signing");
     setErrorMessage(null);
 
     try {
-      // Read the selected image as base64
-      const base64Data = await FileSystem.readAsStringAsync(selectedImage, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      const result = await protectImageWithSignature(protectSourceUri);
 
-      // Get the cloud function URL
-      const functionUrl = await getCloudFunctionUrl();
-      if (!functionUrl) {
-        throw new Error("Cloud function URL not configured. Please set it in Settings.");
-      }
+      setSignedImageUri(result.protectedUri);
+      setProtectPayload(result.payload);
+      setProtectStep("done");
 
-      const normalizedBase = functionUrl.trim().replace(/\/+$/, "");
-      const endpointUrl = normalizedBase.endsWith("/protect-image")
-        ? normalizedBase
-        : `${normalizedBase}/protect-image`;
-      const functionApiKey = await getCloudFunctionApiKey();
-
-      // Send as JSON with base64 image (supported by cloud function)
-      const requestBody = {
-        image_base64: base64Data,
-        strength: 0.3,
-      };
-
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (functionApiKey) {
-        headers.Authorization = `Bearer ${functionApiKey}`;
-      }
-
-      // 🔍 DEBUG LOG 1: What URL are we hitting and how big is the image?
-      console.log("=== CLOUD FUNCTION CALL ===");
-      console.log("Target URL:", endpointUrl);
-      console.log("Base64 String Length:", base64Data.length, "characters (~", Math.round(base64Data.length * 0.75 / 1024 / 1024), "MB)");
-
-      const controller = new AbortController();
-      activeRequestController.current = controller;
-
-      const response = await fetch(endpointUrl, {
-        method: "POST",
-        body: JSON.stringify(requestBody),
-        headers,
-        signal: controller.signal,
-      });
-
-      // 🔍 DEBUG LOG 2: Did the server respond?
-      console.log("Server Response Status:", response.status, response.statusText);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        // 🔍 DEBUG LOG 3: What did the server say was wrong?
-        console.log("Server Error Details:", JSON.stringify(errorData));
-        throw new Error(errorData.error || `Server error: ${response.status}`);
-      }
-
-      const result = await response.json();
-
-      // 🔍 DEBUG LOG 4: Did we get an image back?
-      console.log("Server Success! Keys received:", Object.keys(result));
-      console.log("Has perturbed_image_base64?", !!result.perturbed_image_base64);
-
-      const imageData = typeof result.perturbed_image_base64 === "string"
-        ? result.perturbed_image_base64
-        : typeof result.image === "string"
-          ? result.image
-          : "";
-
-      if (!imageData) {
-        throw new Error(result.error || "Invalid image data received from server.");
-      }
-
-      // Save protected image to cache
-      const cacheDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
-      if (!cacheDir) throw new Error("No cache directory available");
-
-      const fileExt = "jpg";
-      const protectedUri = `${cacheDir}protected_${Date.now()}.${fileExt}`;
-
-      await FileSystem.writeAsStringAsync(protectedUri, imageData, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      if (controller.signal.aborted) {
-        return;
-      }
-
-      setProtectedImage(protectedUri);
-
-      // Update Dashboard Metric
       useDashboardStore.getState().incrementProtectedImagesCount();
+      await loadSettings();
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "Unable to sign this image.";
+      setErrorMessage(message);
+      setProtectStep("error");
+    }
+  };
 
-      setStep('done');
-    } catch (error: any) {
-      if (error?.name === "AbortError") {
-        return;
-      }
-      console.error("=== FETCH FAILED ===", error.message);
-      setErrorMessage(error.message || "An error occurred while securing the image.");
-      setStep('error');
+  const runVerifyFlow = async () => {
+    if (!verifySourceUri) {
+      return;
+    }
+
+    setVerifyLoading(true);
+    setErrorMessage(null);
+
+    try {
+      const result = await verifySignedImage(verifySourceUri, {
+        cloudCheck: verifyCloudCheck,
+      });
+      setVerifyResult(result);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "Verification failed.";
+      setErrorMessage(message);
+      setVerifyResult(null);
     } finally {
-      activeRequestController.current = null;
+      setVerifyLoading(false);
     }
   };
 
   const saveToGallery = async () => {
-    if (!protectedImage) return;
+    if (!signedImageUri) {
+      return;
+    }
+
     try {
       const { status } = await MediaLibrary.requestPermissionsAsync(false, ["photo"]);
-      if (status === 'granted') {
-        await MediaLibrary.saveToLibraryAsync(protectedImage);
-        Alert.alert("Success", "Protected image saved to your gallery!");
+      if (status === "granted") {
+        await MediaLibrary.saveToLibraryAsync(signedImageUri);
+        Alert.alert("Saved", "Signed image saved to your gallery.");
       } else {
-        Alert.alert("Permission Required", "Allow access to save images.");
+        Alert.alert("Permission Required", "Allow gallery permission to save image.");
       }
-    } catch (err) {
-      console.error(err);
-      Alert.alert("Save Failed", "Could not save to gallery.");
+    } catch {
+      Alert.alert("Save Failed", "Could not save signed image.");
     }
   };
+
+  const saveSettings = async () => {
+    setSettingsSaving(true);
+    setErrorMessage(null);
+    try {
+      await setKey(TRUST_REGISTRY_BASE_URL_KEY_NAME, registryBaseUrl.trim());
+      await setKey(TRUST_REGISTRY_API_KEY_NAME, registryApiKey.trim());
+      await setKey(MASTER_PUBLIC_KEY_PEM_KEY_NAME, masterPublicPem.trim());
+      await loadSettings();
+      Alert.alert("Saved", "Trust settings updated.");
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "Could not save trust settings.";
+      setErrorMessage(message);
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+  const modeTitle = useMemo(() => {
+    if (mode === "protect") return "Protect";
+    if (mode === "verify") return "Verify";
+    return "Settings";
+  }, [mode]);
 
   return (
     <View style={styles.container}>
       <Text style={styles.headerTitle}>Image Shield</Text>
       <Text style={styles.subtitle}>
-        Protect your images from AI deepfake extraction by applying adversarial noise via cloud processing.
+        Device-signed image trust with local verification and optional cloud registry checks.
       </Text>
 
-      <View style={styles.imageContainer}>
-        {protectedImage ? (
-          <Image source={{ uri: protectedImage }} style={styles.imageBox} />
-        ) : selectedImage ? (
-          <Image source={{ uri: selectedImage } as any} style={styles.imageBox} />
-        ) : (
-          <View style={[styles.imageBox, styles.placeholderBox]}>
-            <Feather name="image" size={48} color="#2A2D35" />
-            <Text style={styles.placeholderText}>No image selected</Text>
-          </View>
-        )}
-        {/* X button to clear image */}
-        {(selectedImage || protectedImage) && (
-          <TouchableOpacity style={styles.clearButton} onPress={resetState}>
-            <Feather name="x" size={20} color="#E8E9EB" />
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {/* Processing indicator */}
-      {step === 'protecting' && (
-        <View style={styles.stepperContainer}>
-          <ActivityIndicator size="small" color="#4ADE80" />
-          <Text style={styles.stepText}>
-            Applying 6-layer adversarial protection via cloud...
-          </Text>
-        </View>
-      )}
-
-      {/* Success message */}
-      {step === 'done' && (
-        <View style={styles.successContainer}>
-          <Feather name="check-circle" size={24} color="#4ADE80" />
-          <Text style={styles.successText}>Image is fully protected!</Text>
-        </View>
-      )}
-
-      {/* Error message */}
-      {step === 'error' && errorMessage && (
-        <View style={styles.errorContainer}>
-          <Feather name="alert-circle" size={24} color="#EF4444" />
-          <Text style={styles.errorText}>{errorMessage}</Text>
-        </View>
-      )}
-
-      <View style={[
-        styles.buttonsContainer,
-        { paddingBottom: insets.bottom + 70 }
-      ]}>
-        {/* Idle state - show select button */}
-        {step === 'idle' && (
-          <Pressable style={({ pressed }) => [styles.primaryButton, pressed && styles.pressedButton]} onPress={pickImage}>
-            <Feather name="upload" size={20} color="#0E0F11" />
-            <Text style={styles.primaryButtonText}>Select Photo</Text>
-          </Pressable>
-        )}
-
-        {/* Picked state - show protect button */}
-        {step === 'picked' && (
-          <Pressable style={({ pressed }) => [styles.primaryButton, pressed && styles.pressedButton]} onPress={processImage}>
-            <Feather name="shield" size={20} color="#0E0F11" />
-            <Text style={styles.primaryButtonText}>Protect Image</Text>
-          </Pressable>
-        )}
-
-        {/* Processing state - show cancel button */}
-        {step === 'protecting' && (
-          <Pressable style={({ pressed }) => [styles.cancelButton, pressed && styles.pressedButton]} onPress={resetState}>
-            <Feather name="x-circle" size={20} color="#EF4444" />
-            <Text style={styles.cancelButtonText}>Cancel Protection</Text>
-          </Pressable>
-        )}
-
-        {/* Done state - show download button */}
-        {step === 'done' && (
-          <Pressable style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressedButton]} onPress={saveToGallery}>
-            <Feather name="download" size={20} color="#E8E9EB" />
-            <Text style={styles.secondaryButtonText}>Save to Gallery</Text>
-          </Pressable>
-        )}
-
-        {/* Error state - show retry buttons */}
-        {step === 'error' && (
-          <>
-            <Pressable style={styles.primaryButton} onPress={pickImage}>
-              <Feather name="upload" size={20} color="#0E0F11" />
-              <Text style={styles.primaryButtonText}>Select New Photo</Text>
+      <View style={styles.modeSwitcher}>
+        {(["protect", "verify", "settings"] as ShieldMode[]).map((value) => {
+          const active = mode === value;
+          return (
+            <Pressable
+              key={value}
+              style={({ pressed }) => [
+                styles.modeChip,
+                active && styles.modeChipActive,
+                pressed && styles.pressedButton,
+              ]}
+              onPress={() => {
+                setMode(value);
+                setErrorMessage(null);
+              }}
+            >
+              <Text style={[styles.modeChipText, active && styles.modeChipTextActive]}>
+                {value.charAt(0).toUpperCase() + value.slice(1)}
+              </Text>
             </Pressable>
-            {selectedImage && (
-              <Pressable style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressedButton]} onPress={processImage}>
-                <Feather name="shield" size={20} color="#E8E9EB" />
-                <Text style={styles.secondaryButtonText}>Try Again</Text>
-              </Pressable>
-            )}
-          </>
-        )}
+          );
+        })}
       </View>
+
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 96 }}
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={styles.sectionTitle}>{modeTitle} Flow</Text>
+
+        {mode === "protect" ? (
+          <View style={styles.card}>
+            <View style={styles.imageContainer}>
+              {signedImageUri ? (
+                <Image source={{ uri: signedImageUri }} style={styles.imageBox} />
+              ) : protectSourceUri ? (
+                <Image source={{ uri: protectSourceUri }} style={styles.imageBox} />
+              ) : (
+                <View style={[styles.imageBox, styles.placeholderBox]}>
+                  <Feather name="image" size={44} color={THEME.colors.textTertiary} />
+                  <Text style={styles.placeholderText}>Select a photo to sign</Text>
+                </View>
+              )}
+              {(protectSourceUri || signedImageUri) && (
+                <TouchableOpacity style={styles.clearButton} onPress={resetProtectState}>
+                  <Feather name="x" size={20} color={THEME.colors.textPrimary} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <View style={styles.actionsRow}>
+              <Pressable
+                style={({ pressed }) => [styles.primaryButton, pressed && styles.pressedButton]}
+                onPress={() => {
+                  void pickProtectImage();
+                }}
+              >
+                <Feather name="upload" size={18} color="#0A0F14" />
+                <Text style={styles.primaryButtonText}>Select</Text>
+              </Pressable>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.secondaryButton,
+                  (!protectSourceUri || protectStep === "signing") && styles.disabledButton,
+                  pressed && styles.pressedButton,
+                ]}
+                disabled={!protectSourceUri || protectStep === "signing"}
+                onPress={() => {
+                  void runProtectFlow();
+                }}
+              >
+                {protectStep === "signing" ? (
+                  <ActivityIndicator size="small" color={THEME.colors.textPrimary} />
+                ) : (
+                  <>
+                    <Feather name="shield" size={18} color={THEME.colors.textPrimary} />
+                    <Text style={styles.secondaryButtonText}>Protect</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+
+            {protectStep === "done" && protectPayload ? (
+              <View style={styles.resultCard}>
+                <Text style={styles.resultTitle}>Signed Payload</Text>
+                <Text style={styles.resultLine}>Install: {protectPayload.installID}</Text>
+                <Text style={styles.resultLine}>SHA-256: {protectPayload.sha256.slice(0, 20)}...</Text>
+                <Text style={styles.resultLine}>pHash: {protectPayload.phash}</Text>
+                <Text style={styles.resultLine}>Signed at: {new Date(protectPayload.timestamp).toLocaleString()}</Text>
+                <Pressable
+                  style={({ pressed }) => [styles.outlineButton, pressed && styles.pressedButton]}
+                  onPress={() => {
+                    void saveToGallery();
+                  }}
+                >
+                  <Feather name="download" size={16} color={THEME.colors.accent} />
+                  <Text style={styles.outlineButtonText}>Save Signed Image</Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+
+        {mode === "verify" ? (
+          <View style={styles.card}>
+            <View style={styles.imageContainer}>
+              {verifySourceUri ? (
+                <Image source={{ uri: verifySourceUri }} style={styles.imageBox} />
+              ) : (
+                <View style={[styles.imageBox, styles.placeholderBox]}>
+                  <Feather name="search" size={44} color={THEME.colors.textTertiary} />
+                  <Text style={styles.placeholderText}>Select an image to verify</Text>
+                </View>
+              )}
+              {verifySourceUri && (
+                <TouchableOpacity style={styles.clearButton} onPress={resetVerifyState}>
+                  <Feather name="x" size={20} color={THEME.colors.textPrimary} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <View style={styles.switchRow}>
+              <Text style={styles.switchLabel}>Cloud revocation check</Text>
+              <Switch
+                value={verifyCloudCheck}
+                onValueChange={setVerifyCloudCheck}
+                thumbColor={verifyCloudCheck ? THEME.colors.accent : "#B8BDC6"}
+                trackColor={{ false: "#4A5160", true: "#2B7A5A" }}
+              />
+            </View>
+
+            <View style={styles.actionsRow}>
+              <Pressable
+                style={({ pressed }) => [styles.primaryButton, pressed && styles.pressedButton]}
+                onPress={() => {
+                  void pickVerifyImage();
+                }}
+              >
+                <Feather name="upload" size={18} color="#0A0F14" />
+                <Text style={styles.primaryButtonText}>Select</Text>
+              </Pressable>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.secondaryButton,
+                  (!verifySourceUri || verifyLoading) && styles.disabledButton,
+                  pressed && styles.pressedButton,
+                ]}
+                disabled={!verifySourceUri || verifyLoading}
+                onPress={() => {
+                  void runVerifyFlow();
+                }}
+              >
+                {verifyLoading ? (
+                  <ActivityIndicator size="small" color={THEME.colors.textPrimary} />
+                ) : (
+                  <>
+                    <Feather name="check-square" size={18} color={THEME.colors.textPrimary} />
+                    <Text style={styles.secondaryButtonText}>Verify</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+
+            {verifyResult ? (
+              <View style={styles.resultCard}>
+                <View style={styles.statusHeader}>
+                  <Feather
+                    name={STATUS_META[verifyResult.status].icon}
+                    size={20}
+                    color={STATUS_META[verifyResult.status].color}
+                  />
+                  <Text
+                    style={[
+                      styles.statusTitle,
+                      { color: STATUS_META[verifyResult.status].color },
+                    ]}
+                  >
+                    {STATUS_META[verifyResult.status].label}
+                  </Text>
+                </View>
+                <Text style={styles.resultLine}>{verifyResult.summary}</Text>
+                <Text style={styles.resultLine}>Hash check: {verifyResult.checks.hashCheck ? "PASS" : "FAIL"}</Text>
+                <Text style={styles.resultLine}>
+                  Signature check: {verifyResult.checks.signatureCheck ? "PASS" : "FAIL"}
+                </Text>
+                <Text style={styles.resultLine}>
+                  Master cert check: {verifyResult.checks.masterCertCheck ? "PASS" : "FAIL"}
+                </Text>
+                <Text style={styles.resultLine}>Cloud check: {verifyResult.checks.cloudCheck.toUpperCase()}</Text>
+                {typeof verifyResult.pHashDistance === "number" ? (
+                  <Text style={styles.resultLine}>pHash distance: {verifyResult.pHashDistance}</Text>
+                ) : null}
+                {verifyResult.details.map((detail) => (
+                  <Text key={detail} style={styles.detailLine}>
+                    • {detail}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+
+        {mode === "settings" ? (
+          <View style={styles.card}>
+            {settingsLoading ? (
+              <View style={styles.loadingRow}>
+                <ActivityIndicator size="small" color={THEME.colors.accent} />
+                <Text style={styles.loadingText}>Loading trust settings...</Text>
+              </View>
+            ) : (
+              <>
+                <Text style={styles.inputLabel}>Trust Registry Base URL</Text>
+                <TextInput
+                  style={styles.input}
+                  value={registryBaseUrl}
+                  onChangeText={setRegistryBaseUrl}
+                  autoCapitalize="none"
+                  placeholder="https://region-project.cloudfunctions.net"
+                  placeholderTextColor={THEME.colors.textTertiary}
+                />
+
+                <Text style={styles.inputLabel}>Registry API Key</Text>
+                <TextInput
+                  style={styles.input}
+                  value={registryApiKey}
+                  onChangeText={setRegistryApiKey}
+                  autoCapitalize="none"
+                  placeholder="Optional bearer token"
+                  placeholderTextColor={THEME.colors.textTertiary}
+                />
+
+                <Text style={styles.inputLabel}>Master Public Key (PEM)</Text>
+                <TextInput
+                  style={[styles.input, styles.multiInput]}
+                  value={masterPublicPem}
+                  onChangeText={setMasterPublicPem}
+                  autoCapitalize="none"
+                  multiline
+                  placeholder="-----BEGIN PUBLIC KEY-----"
+                  placeholderTextColor={THEME.colors.textTertiary}
+                />
+
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.primaryButton,
+                    settingsSaving && styles.disabledButton,
+                    pressed && styles.pressedButton,
+                  ]}
+                  disabled={settingsSaving}
+                  onPress={() => {
+                    void saveSettings();
+                  }}
+                >
+                  {settingsSaving ? (
+                    <ActivityIndicator size="small" color="#0A0F14" />
+                  ) : (
+                    <>
+                      <Feather name="save" size={18} color="#0A0F14" />
+                      <Text style={styles.primaryButtonText}>Save Settings</Text>
+                    </>
+                  )}
+                </Pressable>
+
+                {deviceSnapshot ? (
+                  <View style={styles.snapshotCard}>
+                    <Text style={styles.resultTitle}>Device Trust State</Text>
+                    <Text style={styles.resultLine}>
+                      Install ID: {deviceSnapshot.installID ?? "Not generated"}
+                    </Text>
+                    <Text style={styles.resultLine}>Device key: {deviceSnapshot.hasDeviceKey ? "Present" : "Missing"}</Text>
+                    <Text style={styles.resultLine}>
+                      Master cert: {deviceSnapshot.hasMasterCert ? "Present" : "Missing"}
+                    </Text>
+                    <Text style={styles.resultLine}>
+                      Register URL: {deviceSnapshot.registerUrl ?? "Not configured"}
+                    </Text>
+                    <Text style={styles.resultLine}>
+                      Verify URL: {deviceSnapshot.verifyUrl ?? "Not configured"}
+                    </Text>
+                    {registryApiKey.trim().length > 0 ? (
+                      <Text style={styles.resultLine}>API key: {maskSecret(registryApiKey.trim())}</Text>
+                    ) : null}
+                  </View>
+                ) : null}
+              </>
+            )}
+          </View>
+        ) : null}
+
+        {errorMessage ? (
+          <View style={styles.errorContainer}>
+            <Feather name="alert-circle" size={18} color={THEME.colors.danger} />
+            <Text style={styles.errorText}>{errorMessage}</Text>
+          </View>
+        ) : null}
+      </ScrollView>
     </View>
   );
 }
@@ -298,12 +594,56 @@ const styles = StyleSheet.create({
     color: THEME.colors.textSecondary,
     fontSize: 14,
     fontFamily: THEME.fontFamily.dmSans,
-    marginBottom: 24,
+    marginBottom: 16,
     lineHeight: 20,
+  },
+  modeSwitcher: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 14,
+  },
+  modeChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: THEME.radius.pill,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+    backgroundColor: THEME.colors.surface,
+  },
+  modeChipActive: {
+    borderColor: `${THEME.colors.accent}AA`,
+    backgroundColor: `${THEME.colors.accent}1C`,
+  },
+  modeChipText: {
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontWeight: "700",
+    fontSize: 13,
+  },
+  modeChipTextActive: {
+    color: THEME.colors.accent,
+  },
+  scroll: {
+    flex: 1,
+  },
+  sectionTitle: {
+    color: THEME.colors.textPrimary,
+    fontSize: THEME.typography.h2,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontWeight: "700",
+    marginBottom: 10,
+  },
+  card: {
+    backgroundColor: THEME.colors.surface,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+    borderRadius: THEME.radius.lg,
+    padding: 14,
+    marginBottom: 14,
   },
   imageContainer: {
     alignItems: "center",
-    marginBottom: 24,
+    marginBottom: 14,
   },
   imageBox: {
     width: "100%",
@@ -315,48 +655,109 @@ const styles = StyleSheet.create({
   placeholderBox: {
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: THEME.colors.surface,
+    backgroundColor: THEME.colors.surfaceMuted,
   },
   placeholderText: {
     color: THEME.colors.textTertiary,
     marginTop: 12,
     fontFamily: THEME.fontFamily.dmSans,
   },
-  stepperContainer: {
+  actionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 10,
+  },
+  switchRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: THEME.colors.surface,
-    padding: 16,
-    borderRadius: THEME.radius.md,
-    borderWidth: 1,
-    borderColor: THEME.colors.border,
-    marginBottom: 24,
+    justifyContent: "space-between",
+    marginBottom: 10,
   },
-  stepText: {
+  switchLabel: {
     color: THEME.colors.textPrimary,
     fontFamily: THEME.fontFamily.dmSans,
-    marginLeft: 12,
+    fontWeight: "700",
   },
-  successContainer: {
+  resultCard: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: THEME.colors.borderStrong,
+    borderRadius: THEME.radius.md,
+    backgroundColor: THEME.colors.surfaceMuted,
+    padding: 12,
+    gap: 6,
+  },
+  snapshotCard: {
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: THEME.colors.borderStrong,
+    borderRadius: THEME.radius.md,
+    backgroundColor: THEME.colors.surfaceMuted,
+    padding: 12,
+    gap: 6,
+  },
+  statusHeader: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: `${THEME.colors.accent}20`,
-    padding: 16,
-    borderRadius: THEME.radius.md,
-    borderWidth: 1,
-    borderColor: `${THEME.colors.accent}92`,
-    marginBottom: 24,
+    gap: 8,
+    marginBottom: 2,
   },
-  successText: {
-    color: THEME.colors.accent,
+  statusTitle: {
     fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 16,
     fontWeight: "700",
-    marginLeft: 12,
   },
-  buttonsContainer: {
-    marginTop: "auto",
-    paddingBottom: 24,
-    gap: 16,
+  resultTitle: {
+    color: THEME.colors.textPrimary,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 15,
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  resultLine: {
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  detailLine: {
+    color: THEME.colors.textTertiary,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  loadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  loadingText: {
+    color: THEME.colors.textSecondary,
+    fontFamily: THEME.fontFamily.dmSans,
+  },
+  inputLabel: {
+    color: THEME.colors.textPrimary,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontSize: 13,
+    fontWeight: "700",
+    marginBottom: 6,
+    marginTop: 4,
+  },
+  input: {
+    backgroundColor: "rgba(10, 14, 22, 0.68)",
+    borderColor: THEME.colors.border,
+    borderWidth: 1,
+    color: THEME.colors.textPrimary,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: THEME.radius.md,
+    fontFamily: THEME.fontFamily.jetbrainsMono,
+    fontSize: 12,
+    marginBottom: 10,
+  },
+  multiInput: {
+    minHeight: 96,
+    textAlignVertical: "top",
   },
   primaryButton: {
     backgroundColor: THEME.colors.accent,
@@ -365,16 +766,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 16,
     borderRadius: THEME.radius.md,
-    gap: 8,
+    gap: 6,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.24,
     shadowRadius: 14,
     elevation: 5,
+    flex: 1,
   },
   primaryButtonText: {
     color: "#0A0F14",
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "700",
     fontFamily: THEME.fontFamily.dmSans,
   },
@@ -387,13 +789,35 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 16,
     borderRadius: THEME.radius.md,
-    gap: 8,
+    gap: 6,
+    flex: 1,
   },
   secondaryButtonText: {
     color: THEME.colors.textPrimary,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "700",
     fontFamily: THEME.fontFamily.dmSans,
+  },
+  disabledButton: {
+    opacity: 0.55,
+  },
+  outlineButton: {
+    borderWidth: 1,
+    borderColor: `${THEME.colors.accent}9A`,
+    borderRadius: THEME.radius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    alignSelf: "flex-start",
+  },
+  outlineButtonText: {
+    color: THEME.colors.accent,
+    fontFamily: THEME.fontFamily.dmSans,
+    fontWeight: "700",
+    fontSize: 13,
   },
   clearButton: {
     position: "absolute",
@@ -407,28 +831,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     zIndex: 10,
   },
-  cancelButton: {
-    backgroundColor: "transparent",
-    borderWidth: 2,
-    borderColor: THEME.colors.danger,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 16,
-    borderRadius: THEME.radius.md,
-    gap: 8,
-  },
-  cancelButtonText: {
-    color: THEME.colors.danger,
-    fontSize: 16,
-    fontWeight: "700",
-    fontFamily: THEME.fontFamily.dmSans,
-  },
   errorContainer: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: `${THEME.colors.danger}1F`,
-    padding: 16,
+    padding: 14,
     borderRadius: THEME.radius.md,
     borderWidth: 1,
     borderColor: `${THEME.colors.danger}8F`,
@@ -437,8 +844,8 @@ const styles = StyleSheet.create({
   errorText: {
     color: THEME.colors.danger,
     fontFamily: THEME.fontFamily.dmSans,
-    fontWeight: "700",
-    marginLeft: 12,
+    fontWeight: "600",
+    marginLeft: 8,
     flex: 1,
   },
   pressedButton: {

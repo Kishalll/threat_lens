@@ -2,6 +2,52 @@
 
 ThreatLens is an Expo React Native app for personal digital safety.
 
+## Quick Setup (Recommended)
+
+Use this split workflow to keep onboarding fast and secrets out of git.
+
+### Maintainer (one-time backend bootstrap)
+
+Run once per project (or when rotating keys/redeploying):
+
+```powershell
+npm run setup:cloud -- -ProjectId YOUR_GCP_PROJECT_ID -WriteEnv
+```
+
+Optional for shared dev backend without API-key auth:
+
+```powershell
+npm run setup:cloud -- -ProjectId YOUR_GCP_PROJECT_ID -DisableApiKeyAuth -WriteEnv
+```
+
+What this script does:
+
+1. Enables required Google Cloud APIs
+2. Ensures Firestore exists
+3. Generates master key pair if missing
+4. Stores secrets in Secret Manager
+5. Deploys `register` and `verify` functions
+6. Writes local `.env` and `.setup/generated/trust-config.json`
+
+### Contributor (new machine or next install)
+
+```powershell
+npm run setup:local
+```
+
+Then run the app:
+
+```powershell
+npx expo run:android
+npx expo start --dev-client
+```
+
+The script:
+
+1. Creates `.env` from `.env.example` if missing
+2. Applies generated backend config if available
+3. Installs npm dependencies
+
 This README is for a first-time contributor who just cloned the repo and wants to run the app using either:
 
 1. Expo Go on a physical phone
@@ -27,11 +73,18 @@ npm install
 
 Create a file named `.env` in project root.
 
+Tip: this is automatic if you run `npm run setup:local`.
+
 ```dotenv
 EXPO_PUBLIC_GEMINI_API_KEY=your_gemini_api_key
-EXPO_PUBLIC_CLOUD_FUNCTION_URL=https://us-central1-threatlens-492816.cloudfunctions.net/protect-image
-EXPO_PUBLIC_CLOUD_FUNCTION_API_KEY=key_of_your_cloud_function
+EXPO_PUBLIC_TRUST_REGISTRY_BASE_URL=https://us-central1-your_project_id.cloudfunctions.net
+EXPO_PUBLIC_TRUST_REGISTRY_API_KEY=your_registry_api_key
+EXPO_PUBLIC_MASTER_PUBLIC_KEY_PEM="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
 ```
+
+For backend deployment details (`/register` + `/verify`, Firestore, cert setup), see [cloud-function/README.md](cloud-function/README.md).
+
+Automated setup scripts are available in [scripts/setup](scripts/setup).
 
 If you change `.env`, restart Metro with cache clear:
 
@@ -178,3 +231,4 @@ Already configured in `app.json` with `scheme: threatlens`.
 
 1. Never commit `.env`.
 2. If any API key is exposed, rotate it immediately.
+3. Never commit `master_private.pem`; store it in Google Secret Manager only.

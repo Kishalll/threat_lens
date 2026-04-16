@@ -61,6 +61,16 @@ export default function BreachDetailScreen() {
     () => breachSuggestions.filter((suggestion) => !suggestion.isFallback),
     [breachSuggestions]
   );
+  const storedGuidance = useMemo(
+    () => parseStoredGuidance(breach?.geminiGuidance),
+    [breach?.geminiGuidance]
+  );
+  const breachId = breach?.id;
+  const isFetchingRef = useRef(false);
+  const [guidance, setGuidance] = useState<BreachGuidance | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [guidanceError, setGuidanceError] = useState<string | null>(null);
+  const renderedGuidance = storedGuidance ?? guidance;
   const requiredActionItems = useMemo(
     () =>
       renderedGuidance && !renderedGuidance.isFallback
@@ -77,16 +87,6 @@ export default function BreachDetailScreen() {
     [actionableSuggestions, requiredActionItems.length]
   );
   const totalSuggestionsCount = requiredActionItems.length;
-  const storedGuidance = useMemo(
-    () => parseStoredGuidance(breach?.geminiGuidance),
-    [breach?.geminiGuidance]
-  );
-  const breachId = breach?.id;
-  const isFetchingRef = useRef(false);
-  const [guidance, setGuidance] = useState<BreachGuidance | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [guidanceError, setGuidanceError] = useState<string | null>(null);
-  const renderedGuidance = storedGuidance ?? guidance;
   const hasGuidance = Boolean(renderedGuidance);
   const isSecured = hasGuidance && (totalSuggestionsCount === 0 || actedSuggestionsCount === totalSuggestionsCount);
   const progressRatio =

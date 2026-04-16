@@ -1,94 +1,259 @@
-import json
 import base64
-import os
+import datetime
 import hmac
+import json
+import os
+from typing import Any, Dict, Optional
+
 import functions_framework
-from image_protect import protect_image
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from google.cloud import firestore
+
+_firestore_client: Optional[firestore.Client] = None
+
+
+def _cors_headers() -> Dict[str, str]:
+    return {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Max-Age": "3600",
+    }
+
+
+def _json_response(payload: Dict[str, Any], status_code: int):
+    headers = _cors_headers()
+    headers["Content-Type"] = "application/json"
+    return (json.dumps(payload), status_code, headers)
 
 
 def _auth_ok(auth_header: str) -> bool:
-    expected = os.environ.get("CLOUD_FUNCTION_API_KEY", "").strip()
+    expected = os.environ.get("TRUST_REGISTRY_API_KEY", "").strip()
     if not expected:
         return True
+
     if not auth_header or not auth_header.startswith("Bearer "):
         return False
-    token = auth_header[len("Bearer "):].strip()
+
+    token = auth_header[len("Bearer ") :].strip()
     return hmac.compare_digest(token, expected)
 
 
-@functions_framework.http
-def protect_image_endpoint(request):
-    # 1. Handle CORS preflight FIRST (before checking POST)
-    if request.method == "OPTIONS":
-        headers = {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-            'Access-Control-Max-Age': '3600',
+def _require_post(request):
+    if request.method != "POST":
+        return _json_response({"error": "Only POST method is supported."}, 405)
+    return None
+
+
+def _canonical_json(payload: Dict[str, Any]) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _utc_now_iso() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _get_firestore_client() -> firestore.Client:
+    global _firestore_client
+    if _firestore_client is None:
+        _firestore_client = firestore.Client()
+    return _firestore_client
+
+
+def _get_registry_collection_name() -> str:
+    name = os.environ.get("REGISTRY_COLLECTION", "trust_registry").strip()
+    return name if name else "trust_registry"
+
+
+def _get_master_private_key():
+    private_key_pem = os.environ.get("MASTER_PRIVATE_KEY_PEM", "")
+    if not private_key_pem:
+        raise RuntimeError(
+            "MASTER_PRIVATE_KEY_PEM is not configured. Set it as an environment variable."
+        )
+
+    normalized_pem = private_key_pem.replace("\\n", "\n").encode("utf-8")
+    return serialization.load_pem_private_key(normalized_pem, password=None)
+
+
+def _sign_cert_payload(cert_payload: Dict[str, Any]) -> str:
+    private_key = _get_master_private_key()
+    signature = private_key.sign(
+        _canonical_json(cert_payload).encode("utf-8"),
+        ec.ECDSA(hashes.SHA256()),
+    )
+    return base64.b64encode(signature).decode("utf-8")
+
+
+def _build_master_cert_blob(cert_payload: Dict[str, Any]) -> str:
+    blob = {
+        "cert": cert_payload,
+        "sig": _sign_cert_payload(cert_payload),
+    }
+    return base64.b64encode(_canonical_json(blob).encode("utf-8")).decode("utf-8")
+
+
+def _build_verify_url(request) -> str:
+    configured = os.environ.get("VERIFY_ENDPOINT_URL", "").strip()
+    if configured:
+        return configured
+
+    request_url = request.url.rstrip("/")
+    if request_url.endswith("/register"):
+        return f"{request_url[:-len('/register')]}/verify"
+    return request_url
+
+
+def _read_verify_params(request) -> Dict[str, Any]:
+    if request.method == "GET":
+        return {
+            "installID": request.args.get("installID", ""),
+            "publicKey": request.args.get("publicKey", ""),
         }
-        return ('', 204, headers)
 
-    # 2. Reject non-POST requests
-    if request.method != 'POST':
-        return (json.dumps({'error': 'Only POST method is supported'}), 405, {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-        })
+    return request.get_json(silent=True) or {}
 
-    # 3. Authenticate
+
+@functions_framework.http
+def register(request):
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_headers())
+
+    invalid_method = _require_post(request)
+    if invalid_method is not None:
+        return invalid_method
+
     auth = request.headers.get("Authorization", "")
     if not _auth_ok(auth):
-        return (json.dumps({"error": "Unauthorized"}), 401, {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*"
-        })
+        return _json_response({"error": "Unauthorized"}, 401)
 
-    # 4. Parse Payload (Aligned with React Native Frontend)
     data = request.get_json(silent=True) or {}
-    image_b64 = data.get("image_base64", "")
-    
-    if not image_b64:
-        return (json.dumps({'error': 'No image_base64 provided'}), 400, {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-        })
+    install_id = str(data.get("installID", "")).strip()
+    public_key = str(data.get("publicKey", "")).strip()
+    device_model = str(data.get("deviceModel", "unknown-device")).strip() or "unknown-device"
+    app_version = str(data.get("appVersion", "0.0.0")).strip() or "0.0.0"
+    app_build_number = int(data.get("appBuildNumber", 0) or 0)
 
-    try:
-        # Strip data URI prefix if the frontend sends one
-        if "," in image_b64:
-            image_b64 = image_b64.split(",", 1)[1]
-            
-        image_bytes = base64.b64decode(image_b64)
-        strength = float(data.get('strength', 0.05))
-        uuid = data.get('uuid')
+    if not install_id:
+        return _json_response({"error": "installID is required"}, 400)
+    if not public_key:
+        return _json_response({"error": "publicKey is required"}, 400)
 
-    except Exception:
-        return (json.dumps({'error': 'Invalid base64 image data'}), 400, {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-        })
-
-    # 5. Run Protection Pipeline
-    result = protect_image(image_bytes, strength, uuid)
-
-    if not result['success']:
-        return (json.dumps({'error': result.get('error', 'Protection failed')}), 500, {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-        })
-
-    # 6. Return Response (Aligned with React Native Frontend)
-    # Return RAW base64, not a data URI, because normalizeBase64Payload expects raw base64
-    output_b64 = base64.b64encode(result['image_bytes']).decode('utf-8')
-
-    response_data = {
-        'perturbed_image_base64': output_b64,  # Frontend looks for this key
-        'protectionId': result['protection_id'],
-        'protectionsApplied': result['protections_applied'],
-        'strength': result['strength'],
+    now_iso = _utc_now_iso()
+    cert_payload = {
+        "v": 1,
+        "issuer": "ThreatLens Master CA",
+        "issuedAt": now_iso,
+        "installID": install_id,
+        "publicKey": public_key,
     }
 
-    return (json.dumps(response_data), 200, {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-    })
+    try:
+        master_cert_blob = _build_master_cert_blob(cert_payload)
+    except Exception as error:
+        return _json_response({"error": f"Failed to sign certificate: {error}"}, 500)
+
+    record = {
+        "installID": install_id,
+        "publicKey": public_key,
+        "deviceModel": device_model,
+        "appVersion": app_version,
+        "appBuildNumber": app_build_number,
+        "masterCert": master_cert_blob,
+        "revoked": False,
+        "updatedAt": now_iso,
+    }
+
+    db = _get_firestore_client()
+    doc_ref = db.collection(_get_registry_collection_name()).document(install_id)
+    existing = doc_ref.get()
+
+    if not existing.exists:
+        record["createdAt"] = now_iso
+    else:
+        previous = existing.to_dict() or {}
+        if bool(previous.get("revoked", False)):
+            return _json_response(
+                {
+                    "ok": False,
+                    "status": "REVOKED",
+                    "installID": install_id,
+                    "message": "This installID is revoked and cannot be re-registered.",
+                },
+                403,
+            )
+
+    doc_ref.set(record, merge=True)
+
+    return _json_response(
+        {
+            "ok": True,
+            "status": "ACTIVE",
+            "installID": install_id,
+            "masterCert": master_cert_blob,
+            "cloudVerifyURL": _build_verify_url(request),
+            "registeredAt": now_iso,
+        },
+        200,
+    )
+
+
+@functions_framework.http
+def verify(request):
+    if request.method == "OPTIONS":
+        return ("", 204, _cors_headers())
+
+    if request.method not in {"POST", "GET"}:
+        return _json_response({"error": "Only GET or POST methods are supported."}, 405)
+
+    auth = request.headers.get("Authorization", "")
+    if not _auth_ok(auth):
+        return _json_response({"error": "Unauthorized"}, 401)
+
+    params = _read_verify_params(request)
+    install_id = str(params.get("installID", "")).strip()
+    provided_public_key = str(params.get("publicKey", "")).strip()
+
+    if not install_id:
+        return _json_response({"error": "installID is required"}, 400)
+
+    db = _get_firestore_client()
+    doc = db.collection(_get_registry_collection_name()).document(install_id).get()
+
+    if not doc.exists:
+        return _json_response(
+            {
+                "ok": True,
+                "status": "NOT_FOUND",
+                "installID": install_id,
+                "registered": False,
+                "revoked": False,
+                "publicKeyMatch": None,
+                "verifiedAt": _utc_now_iso(),
+            },
+            200,
+        )
+
+    payload = doc.to_dict() or {}
+    stored_public_key = str(payload.get("publicKey", "")).strip()
+    revoked = bool(payload.get("revoked", False))
+    public_key_match = None
+    if provided_public_key:
+        public_key_match = hmac.compare_digest(stored_public_key, provided_public_key)
+
+    return _json_response(
+        {
+            "ok": True,
+            "status": "REVOKED" if revoked else "ACTIVE",
+            "installID": install_id,
+            "registered": True,
+            "revoked": revoked,
+            "publicKey": stored_public_key,
+            "publicKeyMatch": public_key_match,
+            "masterCert": str(payload.get("masterCert", "")),
+            "updatedAt": str(payload.get("updatedAt", "")),
+            "verifiedAt": _utc_now_iso(),
+        },
+        200,
+    )
