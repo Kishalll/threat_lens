@@ -260,10 +260,9 @@ function hammingDistanceHex(a: string, b: string): number {
 
 function derEcdsaToCompactSignature(der: Uint8Array): Uint8Array | null {
   try {
-    // Parse DER manually: 0x30 [len] 0x02 [rLen] [r] 0x02 [sLen] [s]
     if (der.length < 8 || der[0] !== 0x30) return null;
 
-    let offset = 2; // skip 0x30 and sequence length byte
+    let offset = 2;
 
     if (der[offset] !== 0x02) return null;
     const rLen = der[offset + 1];
@@ -276,16 +275,36 @@ function derEcdsaToCompactSignature(der: Uint8Array): Uint8Array | null {
     offset += 2;
     let s = der.slice(offset, offset + sLen);
 
-    // Strip leading 0x00 padding bytes DER adds when high bit is set
     while (r.length > 32 && r[0] === 0x00) r = r.slice(1);
     while (s.length > 32 && s[0] === 0x00) s = s.slice(1);
-
     if (r.length > 32 || s.length > 32) return null;
 
-    // Left-pad to exactly 32 bytes
+    // P-256 curve order n
+    const n = BigInt("0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+    const halfN = n >> BigInt(1);
+
+    // Convert s to BigInt
+    let sBig = BigInt(0);
+    for (const byte of s) {
+      sBig = (sBig << BigInt(8)) | BigInt(byte);
+    }
+
+    // Normalize to low-S if needed (noble v2 enforces low-S)
+    if (sBig > halfN) {
+      sBig = n - sBig;
+    }
+
+    // Convert normalized s back to 32 bytes
+    const sNorm = new Uint8Array(32);
+    let tmp = sBig;
+    for (let i = 31; i >= 0; i--) {
+      sNorm[i] = Number(tmp & BigInt(0xff));
+      tmp >>= BigInt(8);
+    }
+
     const compact = new Uint8Array(64);
     compact.set(r, 32 - r.length);
-    compact.set(s, 64 - s.length);
+    compact.set(sNorm, 32);
     return compact;
   } catch {
     return null;
@@ -394,32 +413,29 @@ async function isMasterCertValidForIdentity(
     }
 
     const certJson = canonicalJson(certBlob.cert);
-    const certHash = sha256(utf8ToBytes(certJson));
+    const certMessage = utf8ToBytes(certJson);
+    const certHash = sha256(certMessage);
     __debug("masterCert:certHash", { certHashHex: bytesToHex(certHash), certJson });
 
     const certSigBytes = base64ToBytes(certBlob.sig);
     __debug("masterCert:sig", { sigByteLength: certSigBytes.length, firstByte: certSigBytes[0] });
 
-    // Backend signs with Python cryptography which emits DER-encoded ECDSA.
-    // Noble's p256.verify accepts DER directly in recent versions, but we also
-    // try compact conversion for older versions.
-    try {
-      if (p256.verify(certSigBytes, certHash, masterPublicKeyBytes)) {
-        __debug("masterCert:ok", { path: "direct" });
-        return true;
-      }
-    } catch (e) {
-      __debug("masterCert:directFail", { error: String(e) });
-    }
-
+    // Noble v2.2.0 only accepts 64-byte compact signatures, not DER.
+    // Backend now produces low-S so compact conversion works directly.
     const compactSig = derEcdsaToCompactSignature(certSigBytes);
     if (!compactSig) {
       __debug("masterCert:fail", { reason: "DER→compact conversion failed" });
       return false;
     }
 
-    const result = p256.verify(compactSig, certHash, masterPublicKeyBytes);
-    __debug("masterCert:compactResult", { result });
+    __debug("masterCert:compactSig", {
+      compactLength: compactSig.length,
+      compactHex: bytesToHex(compactSig),
+      certHashHex: bytesToHex(certHash),
+    });
+
+    const result = p256.verify(compactSig, certHash, masterPublicKeyBytes, { prehash: false });
+    __debug("masterCert:ok", { path: "compact", result });
     return result;
   } catch (e) {
     __debug("masterCert:exception", { error: String(e) });
@@ -675,10 +691,11 @@ async function readSignedPayloadFromImage(imageUri: string): Promise<{ payload: 
 function verifyPayloadSignature(payload: SignedImagePayload): boolean {
   try {
     const unsignedPayload = getUnsignedPayload(payload);
-    const messageHash = sha256(utf8ToBytes(canonicalJson(unsignedPayload)));
+    const messageBytes = utf8ToBytes(canonicalJson(unsignedPayload));
+    const messageHash = sha256(messageBytes);
     const signatureBytes = base64ToBytes(payload.signature);
     const publicKeyBytes = base64ToBytes(payload.publicKey);
-    return p256.verify(signatureBytes, messageHash, publicKeyBytes);
+    return p256.verify(signatureBytes, messageHash, publicKeyBytes, { prehash: false });
   } catch {
     return false;
   }
@@ -697,14 +714,18 @@ async function cloudVerify(payload: SignedImagePayload, shouldCheckCloud: boolea
     };
   }
 
-  const verifyUrl = payload.cloudVerifyURL?.trim();
-  if (!verifyUrl) {
+  const verifyUrlRaw = payload.cloudVerifyURL?.trim();
+  if (!verifyUrlRaw) {
     return {
       cloudCheck: "failed",
       revoked: false,
       details: ["Cloud verify URL is missing in payload."],
     };
   }
+
+  const verifyUrl = verifyUrlRaw.startsWith("http://")
+    ? `https://${verifyUrlRaw.slice("http://".length)}`
+    : verifyUrlRaw;
 
   const apiKey = await getTrustRegistryApiKey();
   const headers: Record<string, string> = {
@@ -846,15 +867,15 @@ export async function protectImageWithSignature(imageUri: string): Promise<Prote
     throw new Error("Master certificate is missing after registration.");
   }
 
-  const messageHash = sha256(utf8ToBytes(canonicalJson(unsignedPayload)));
+  const messageBytes = utf8ToBytes(canonicalJson(unsignedPayload));
+  const messageHash = sha256(messageBytes);
   const privateKeyBytes = hexToBytes(identity.privateKeyHex);
   // p256.sign() may return a Signature object or Uint8Array depending on @noble/curves version.
   // Cast to unknown so toCompactSignatureBytes() handles both cases without a TS error.
-  const signatureRaw = p256.sign(messageHash, privateKeyBytes);
+  const signatureRaw = p256.sign(messageHash, privateKeyBytes, { prehash: false });
   const signatureBytes = toCompactSignatureBytes(signatureRaw as unknown);
 
   __debug("protect:sign", {
-    messageHashHex: bytesToHex(messageHash),
     signatureLengthBytes: signatureBytes.length,
     publicKeyB64Prefix: identity.publicKeyBase64.slice(0, 16),
   });

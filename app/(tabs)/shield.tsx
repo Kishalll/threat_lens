@@ -171,6 +171,7 @@ export default function ShieldScreen() {
       mediaTypes: ["images"],
       allowsEditing: false,
       quality: 1,
+      ...(Platform.OS === "android" ? { legacy: true } : {}),
     });
 
     if (result.canceled || result.assets.length === 0) {

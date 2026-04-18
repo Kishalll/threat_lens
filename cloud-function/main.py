@@ -8,9 +8,13 @@ from typing import Any, Dict, Optional
 import functions_framework
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature, encode_dss_signature
 from google.cloud import firestore
 
 _firestore_client: Optional[firestore.Client] = None
+
+# P-256 curve order — used for low-S normalization
+_P256_ORDER = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 
 
 def _cors_headers() -> Dict[str, str]:
@@ -79,11 +83,20 @@ def _get_master_private_key():
 
 def _sign_cert_payload(cert_payload: Dict[str, Any]) -> str:
     private_key = _get_master_private_key()
-    signature = private_key.sign(
-        _canonical_json(cert_payload).encode("utf-8"),
-        ec.ECDSA(hashes.SHA256()),
-    )
-    return base64.b64encode(signature).decode("utf-8")
+    message = _canonical_json(cert_payload).encode("utf-8")
+
+    # Sign with ECDSA SHA-256 — Python cryptography produces DER-encoded signature
+    signature_der = private_key.sign(message, ec.ECDSA(hashes.SHA256()))
+
+    # Normalize to low-S form so that @noble/curves v2 (which enforces low-S) accepts it.
+    # Python's cryptography library does not enforce low-S by default, so ~50% of
+    # signatures would be rejected by noble without this normalization.
+    r, s = decode_dss_signature(signature_der)
+    if s > _P256_ORDER // 2:
+        s = _P256_ORDER - s
+    signature_der = encode_dss_signature(r, s)
+
+    return base64.b64encode(signature_der).decode("utf-8")
 
 
 def _build_master_cert_blob(cert_payload: Dict[str, Any]) -> str:
@@ -100,6 +113,9 @@ def _build_verify_url(request) -> str:
         return configured
 
     request_url = request.url.rstrip("/")
+    if request_url.startswith("http://"):
+        request_url = "https://" + request_url[len("http://") :]
+
     if request_url.endswith("/register"):
         return f"{request_url[:-len('/register')]}/verify"
     return request_url
