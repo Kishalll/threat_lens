@@ -26,6 +26,42 @@ import {
   getVerifyEndpointUrl,
 } from "./secureKeyService";
 
+// ---------------------------------------------------------------------------
+// Debug instrumentation — safe, no secrets leaked.
+// Set EXPO_PUBLIC_THREATLENS_DEBUG=true in .env to enable verbose logging.
+// ---------------------------------------------------------------------------
+const DEBUG_ENABLED = process.env.EXPO_PUBLIC_THREATLENS_DEBUG === "true";
+
+function __debug(tag: string, data?: Record<string, unknown>): void {
+  if (!DEBUG_ENABLED) return;
+  const prefix = `[ThreatLens:${tag}]`;
+  if (data) {
+    console.log(prefix, JSON.stringify(data, null, 2));
+  } else {
+    console.log(prefix);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Signature normalization — handles both @noble/curves versions:
+//   older: p256.sign() returns a Signature object with .toCompactRawBytes()
+//   newer: p256.sign() returns Uint8Array directly
+// ---------------------------------------------------------------------------
+function toCompactSignatureBytes(sig: unknown): Uint8Array {
+  if (sig instanceof Uint8Array) {
+    return sig;
+  }
+  if (
+    sig !== null &&
+    typeof sig === "object" &&
+    "toCompactRawBytes" in sig &&
+    typeof (sig as { toCompactRawBytes: unknown }).toCompactRawBytes === "function"
+  ) {
+    return (sig as { toCompactRawBytes: () => Uint8Array }).toCompactRawBytes();
+  }
+  throw new Error("p256.sign() returned an unrecognised type — update @noble/curves.");
+}
+
 const DEVICE_INSTALL_ID_KEY = "THREATLENS_INSTALL_ID";
 const DEVICE_PRIVATE_KEY_KEY = "THREATLENS_DEVICE_PRIVATE_KEY_HEX";
 const DEVICE_PUBLIC_KEY_KEY = "THREATLENS_DEVICE_PUBLIC_KEY_B64";
@@ -67,7 +103,7 @@ function sortRecursively(value: unknown): unknown {
 
   if (value && typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
-      a.localeCompare(b)
+      a < b ? -1 : a > b ? 1 : 0
     );
 
     const sorted: Record<string, unknown> = {};
@@ -127,11 +163,20 @@ function getUnsignedPayload(payload: SignedImagePayload): Omit<SignedImagePayloa
 function ensureP256PublicKeyBytes(input: string): Uint8Array {
   const normalized = input.trim();
   const base64Body = normalized
-    .replace("-----BEGIN PUBLIC KEY-----", "")
-    .replace("-----END PUBLIC KEY-----", "")
-    .replace(/\s+/g, "");
+  .replace("-----BEGIN PUBLIC KEY-----", "")
+  .replace("-----END PUBLIC KEY-----", "")
+  .replace(/\s+/g, "")
+  .replace(/\\/g, "");  // strip any stray backslashes
 
-  const decoded = base64ToBytes(base64Body);
+  // TEMPORARY DEBUG
+  console.log("[ThreatLens:pemDebug] base64Body length:", base64Body.length);
+  console.log("[ThreatLens:pemDebug] base64Body:", base64Body);
+
+  const padded = base64Body + "==".slice((base64Body.length % 4) || 4);
+  const decoded = base64ToBytes(padded);
+
+  console.log("[ThreatLens:pemDebug] decoded byte length:", decoded.length);
+  console.log("[ThreatLens:pemDebug] first 4 bytes:", decoded[0], decoded[1], decoded[2], decoded[3]);
 
   if (decoded.length === 65 && decoded[0] === 0x04) {
     return decoded;
@@ -214,98 +259,37 @@ function hammingDistanceHex(a: string, b: string): number {
 }
 
 function derEcdsaToCompactSignature(der: Uint8Array): Uint8Array | null {
-  const readLength = (input: Uint8Array, offset: number): { length: number; nextOffset: number } | null => {
-    if (offset >= input.length) {
-      return null;
-    }
+  try {
+    // Parse DER manually: 0x30 [len] 0x02 [rLen] [r] 0x02 [sLen] [s]
+    if (der.length < 8 || der[0] !== 0x30) return null;
 
-    const first = input[offset];
-    if ((first & 0x80) === 0) {
-      return { length: first, nextOffset: offset + 1 };
-    }
+    let offset = 2; // skip 0x30 and sequence length byte
 
-    const byteCount = first & 0x7f;
-    if (byteCount === 0 || byteCount > 4 || offset + 1 + byteCount > input.length) {
-      return null;
-    }
+    if (der[offset] !== 0x02) return null;
+    const rLen = der[offset + 1];
+    offset += 2;
+    let r = der.slice(offset, offset + rLen);
+    offset += rLen;
 
-    let length = 0;
-    for (let i = 0; i < byteCount; i += 1) {
-      length = (length << 8) | input[offset + 1 + i];
-    }
+    if (der[offset] !== 0x02) return null;
+    const sLen = der[offset + 1];
+    offset += 2;
+    let s = der.slice(offset, offset + sLen);
 
-    return { length, nextOffset: offset + 1 + byteCount };
-  };
+    // Strip leading 0x00 padding bytes DER adds when high bit is set
+    while (r.length > 32 && r[0] === 0x00) r = r.slice(1);
+    while (s.length > 32 && s[0] === 0x00) s = s.slice(1);
 
-  const normalizeInt32 = (bytes: Uint8Array): Uint8Array | null => {
-    let start = 0;
-    while (start < bytes.length - 1 && bytes[start] === 0x00) {
-      start += 1;
-    }
+    if (r.length > 32 || s.length > 32) return null;
 
-    const trimmed = bytes.slice(start);
-    if (trimmed.length > 32) {
-      return null;
-    }
-
-    const out = new Uint8Array(32);
-    out.set(trimmed, 32 - trimmed.length);
-    return out;
-  };
-
-  if (der.length < 8 || der[0] !== 0x30) {
+    // Left-pad to exactly 32 bytes
+    const compact = new Uint8Array(64);
+    compact.set(r, 32 - r.length);
+    compact.set(s, 64 - s.length);
+    return compact;
+  } catch {
     return null;
   }
-
-  const seqLenInfo = readLength(der, 1);
-  if (!seqLenInfo) {
-    return null;
-  }
-
-  const seqEnd = seqLenInfo.nextOffset + seqLenInfo.length;
-  if (seqEnd !== der.length) {
-    return null;
-  }
-
-  let offset = seqLenInfo.nextOffset;
-
-  if (offset >= der.length || der[offset] !== 0x02) {
-    return null;
-  }
-  const rLenInfo = readLength(der, offset + 1);
-  if (!rLenInfo) {
-    return null;
-  }
-  const rEnd = rLenInfo.nextOffset + rLenInfo.length;
-  if (rEnd > der.length) {
-    return null;
-  }
-  const r = der.slice(rLenInfo.nextOffset, rEnd);
-  offset = rEnd;
-
-  if (offset >= der.length || der[offset] !== 0x02) {
-    return null;
-  }
-  const sLenInfo = readLength(der, offset + 1);
-  if (!sLenInfo) {
-    return null;
-  }
-  const sEnd = sLenInfo.nextOffset + sLenInfo.length;
-  if (sEnd !== der.length) {
-    return null;
-  }
-  const s = der.slice(sLenInfo.nextOffset, sEnd);
-
-  const normalizedR = normalizeInt32(r);
-  const normalizedS = normalizeInt32(s);
-  if (!normalizedR || !normalizedS) {
-    return null;
-  }
-
-  const compact = new Uint8Array(64);
-  compact.set(normalizedR, 0);
-  compact.set(normalizedS, 32);
-  return compact;
 }
 
 async function getSecureItem(key: string): Promise<string | null> {
@@ -373,44 +357,72 @@ async function isMasterCertValidForIdentity(
   try {
     const masterPublicKeyPemOrB64 = await getMasterPublicKeyPem();
     if (!masterPublicKeyPemOrB64) {
+      __debug("masterCert:fail", { reason: "Master public key not configured in env/store" });
       return false;
     }
 
-    const masterPublicKeyBytes = ensureP256PublicKeyBytes(masterPublicKeyPemOrB64);
+    let masterPublicKeyBytes: Uint8Array;
+    try {
+      masterPublicKeyBytes = ensureP256PublicKeyBytes(masterPublicKeyPemOrB64);
+      __debug("masterCert:pubkey", { byteLength: masterPublicKeyBytes.length, firstByte: masterPublicKeyBytes[0] });
+    } catch (e) {
+      __debug("masterCert:fail", { reason: "ensureP256PublicKeyBytes threw", error: String(e) });
+      return false;
+    }
+
     const certBlobRaw = decodeUtf8(base64ToBytes(masterCert));
+    __debug("masterCert:raw", { certBlobLength: certBlobRaw.length, preview: certBlobRaw.slice(0, 80) });
+
     const certBlob = parseJsonSafe<SignedMasterCert>(certBlobRaw);
     if (!certBlob) {
+      __debug("masterCert:fail", { reason: "certBlob JSON parse failed", raw: certBlobRaw.slice(0, 120) });
       return false;
     }
 
     if (certBlob.cert.installID !== installID) {
+      __debug("masterCert:fail", { reason: "installID mismatch", cert: certBlob.cert.installID, identity: installID });
       return false;
     }
 
     if (certBlob.cert.publicKey !== publicKey) {
+      __debug("masterCert:fail", {
+        reason: "publicKey mismatch",
+        certKeyPrefix: certBlob.cert.publicKey.slice(0, 20),
+        identityKeyPrefix: publicKey.slice(0, 20),
+      });
       return false;
     }
 
-    const certHash = sha256(utf8ToBytes(canonicalJson(certBlob.cert)));
-    const certSigBytes = base64ToBytes(certBlob.sig);
+    const certJson = canonicalJson(certBlob.cert);
+    const certHash = sha256(utf8ToBytes(certJson));
+    __debug("masterCert:certHash", { certHashHex: bytesToHex(certHash), certJson });
 
-    // Backend signs certificates using Python cryptography, which returns DER-encoded ECDSA.
-    // Noble verifies compact signatures directly, so normalize DER when needed.
+    const certSigBytes = base64ToBytes(certBlob.sig);
+    __debug("masterCert:sig", { sigByteLength: certSigBytes.length, firstByte: certSigBytes[0] });
+
+    // Backend signs with Python cryptography which emits DER-encoded ECDSA.
+    // Noble's p256.verify accepts DER directly in recent versions, but we also
+    // try compact conversion for older versions.
     try {
       if (p256.verify(certSigBytes, certHash, masterPublicKeyBytes)) {
+        __debug("masterCert:ok", { path: "direct" });
         return true;
       }
-    } catch {
-      // Fall through to DER normalization path.
+    } catch (e) {
+      __debug("masterCert:directFail", { error: String(e) });
     }
 
     const compactSig = derEcdsaToCompactSignature(certSigBytes);
     if (!compactSig) {
+      __debug("masterCert:fail", { reason: "DER→compact conversion failed" });
       return false;
     }
 
-    return p256.verify(compactSig, certHash, masterPublicKeyBytes);
-  } catch {
+    const result = p256.verify(compactSig, certHash, masterPublicKeyBytes);
+    __debug("masterCert:compactResult", { result });
+    return result;
+  } catch (e) {
+    __debug("masterCert:exception", { error: String(e) });
     return false;
   }
 }
@@ -466,7 +478,19 @@ async function ensureDeviceRegistration(identity: DeviceIdentity): Promise<Devic
     masterCert?: unknown;
     cloudVerifyURL?: unknown;
     error?: unknown;
+    ok?: unknown;
+    status?: unknown;
   };
+
+  __debug("register:response", {
+    httpStatus: response.status,
+    ok: parsed.ok,
+    status: parsed.status,
+    hasMasterCert: typeof parsed.masterCert === "string" && parsed.masterCert.length > 0,
+    masterCertLength: typeof parsed.masterCert === "string" ? parsed.masterCert.length : 0,
+    cloudVerifyURL: typeof parsed.cloudVerifyURL === "string" ? parsed.cloudVerifyURL : null,
+    error: parsed.error ?? null,
+  });
 
   if (!response.ok) {
     const message =
@@ -691,6 +715,12 @@ async function cloudVerify(payload: SignedImagePayload, shouldCheckCloud: boolea
   }
 
   try {
+    __debug("cloud:verify:request", {
+      url: verifyUrl,
+      installID: payload.installID,
+      publicKeyPrefix: payload.publicKey.slice(0, 16),
+    });
+
     const response = await fetch(verifyUrl, {
       method: "POST",
       headers,
@@ -705,6 +735,13 @@ async function cloudVerify(payload: SignedImagePayload, shouldCheckCloud: boolea
       publicKeyMatch?: unknown;
       error?: unknown;
     };
+
+    __debug("cloud:verify:response", {
+      httpStatus: response.status,
+      status: body.status,
+      publicKeyMatch: body.publicKeyMatch,
+      error: body.error ?? null,
+    });
 
     if (!response.ok) {
       const serverError = typeof body.error === "string" ? body.error : `HTTP ${response.status}`;
@@ -747,11 +784,12 @@ async function cloudVerify(payload: SignedImagePayload, shouldCheckCloud: boolea
       revoked: false,
       details: [`Cloud registry status is ${status}.`],
     };
-  } catch {
+  } catch (e) {
+    __debug("cloud:verify:offline", { error: String(e) });
     return {
       cloudCheck: "offline",
       revoked: false,
-      details: ["Cloud verification unavailable (offline or network error)."],
+      details: [`Cloud verification unavailable: ${e instanceof Error ? e.message : "network error"}`],
     };
   }
 }
@@ -810,11 +848,20 @@ export async function protectImageWithSignature(imageUri: string): Promise<Prote
 
   const messageHash = sha256(utf8ToBytes(canonicalJson(unsignedPayload)));
   const privateKeyBytes = hexToBytes(identity.privateKeyHex);
-  const signature = p256.sign(messageHash, privateKeyBytes);
+  // p256.sign() may return a Signature object or Uint8Array depending on @noble/curves version.
+  // Cast to unknown so toCompactSignatureBytes() handles both cases without a TS error.
+  const signatureRaw = p256.sign(messageHash, privateKeyBytes);
+  const signatureBytes = toCompactSignatureBytes(signatureRaw as unknown);
+
+  __debug("protect:sign", {
+    messageHashHex: bytesToHex(messageHash),
+    signatureLengthBytes: signatureBytes.length,
+    publicKeyB64Prefix: identity.publicKeyBase64.slice(0, 16),
+  });
 
   const payload: SignedImagePayload = {
     ...unsignedPayload,
-    signature: bytesToBase64(signature),
+    signature: bytesToBase64(signatureBytes),
   };
 
   const protectedUri = await embedSignedPayload(jpeg.base64, payload);
@@ -829,7 +876,8 @@ export async function verifySignedImage(
     hashCheck: false,
     signatureCheck: false,
     masterCertCheck: false,
-    cloudCheck: options?.cloudCheck === false ? "skipped" : "offline",
+    // "skipped" until we actually attempt a cloud call (avoids misleading "offline" when cert fails early)
+    cloudCheck: options?.cloudCheck === false ? "skipped" : "skipped",
   };
 
   const extracted = await readSignedPayloadFromImage(imageUri);

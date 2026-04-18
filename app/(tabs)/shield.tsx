@@ -11,9 +11,11 @@ import {
   ScrollView,
   TextInput,
   Switch,
+  Platform,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
+import * as FileSystem from "expo-file-system/legacy";
 import Feather from "@expo/vector-icons/Feather";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useDashboardStore } from "../../src/stores/dashboardStore";
@@ -34,12 +36,15 @@ import {
   getMasterPublicKeyPem,
   getTrustRegistryApiKey,
   getTrustRegistryBaseUrl,
+  getKey,
   setKey,
 } from "../../src/services/secureKeyService";
 import { THEME } from "../../src/constants/theme";
 
 type ShieldMode = "protect" | "verify" | "settings";
 type ProtectStep = "idle" | "picked" | "signing" | "done" | "error";
+const PROTECTED_ALBUM_NAME = "ThreatLens Protected";
+const PROTECTED_EXPORT_DIR_URI_KEY = "THREATLENS_PROTECTED_EXPORT_DIR_URI";
 
 const STATUS_META: Record<
   VerificationStatus,
@@ -89,6 +94,7 @@ export default function ShieldScreen() {
   const [registryBaseUrl, setRegistryBaseUrl] = useState<string>("");
   const [registryApiKey, setRegistryApiKey] = useState<string>("");
   const [masterPublicPem, setMasterPublicPem] = useState<string>("");
+  const [protectedExportDirUri, setProtectedExportDirUri] = useState<string | null>(null);
   const [deviceSnapshot, setDeviceSnapshot] = useState<{
     installID: string | null;
     hasDeviceKey: boolean;
@@ -108,11 +114,17 @@ export default function ShieldScreen() {
         getMasterPublicKeyPem(),
         getImageTrustSettingsSnapshot(),
       ]);
+      const savedProtectedDirUri = await getKey(PROTECTED_EXPORT_DIR_URI_KEY);
 
       setRegistryBaseUrl(baseUrl ?? "");
       setRegistryApiKey(apiKey ?? "");
       setMasterPublicPem(masterPem ?? "");
       setDeviceSnapshot(snapshot);
+      setProtectedExportDirUri(
+        typeof savedProtectedDirUri === "string" && savedProtectedDirUri.trim().length > 0
+          ? savedProtectedDirUri.trim()
+          : null
+      );
     } finally {
       setSettingsLoading(false);
     }
@@ -222,16 +234,139 @@ export default function ShieldScreen() {
     }
   };
 
+  const requestProtectedDirectoryUri = async (): Promise<string | null> => {
+    if (Platform.OS !== "android") {
+      return null;
+    }
+
+    const permission = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+    if (!permission.granted) {
+      return null;
+    }
+
+    await setKey(PROTECTED_EXPORT_DIR_URI_KEY, permission.directoryUri);
+    setProtectedExportDirUri(permission.directoryUri);
+    return permission.directoryUri;
+  };
+
+  const getProtectedDirectoryUri = async (): Promise<string | null> => {
+    if (protectedExportDirUri) {
+      return protectedExportDirUri;
+    }
+
+    const stored = await getKey(PROTECTED_EXPORT_DIR_URI_KEY);
+    if (typeof stored === "string" && stored.trim().length > 0) {
+      const normalized = stored.trim();
+      setProtectedExportDirUri(normalized);
+      return normalized;
+    }
+
+    return requestProtectedDirectoryUri();
+  };
+
+  const changeProtectedFolder = async () => {
+    try {
+      const directoryUri = await requestProtectedDirectoryUri();
+      if (!directoryUri) {
+        Alert.alert("Folder Not Changed", "No folder selected.");
+        return;
+      }
+      Alert.alert("Updated", "Protected folder updated.");
+    } catch {
+      Alert.alert("Update Failed", "Could not change protected folder.");
+    }
+  };
+
+  const resetProtectedFolder = async () => {
+    try {
+      await setKey(PROTECTED_EXPORT_DIR_URI_KEY, "");
+      setProtectedExportDirUri(null);
+      Alert.alert("Reset", "Protected folder selection cleared.");
+    } catch {
+      Alert.alert("Reset Failed", "Could not reset protected folder.");
+    }
+  };
+
+  const protectedFolderDisplay = useMemo(() => {
+    if (!protectedExportDirUri) {
+      return "Not selected";
+    }
+
+    const decoded = decodeURIComponent(protectedExportDirUri);
+    const marker = "/tree/";
+    const index = decoded.indexOf(marker);
+    if (index >= 0) {
+      return decoded.slice(index + marker.length);
+    }
+    return decoded;
+  }, [protectedExportDirUri]);
+
   const saveToGallery = async () => {
     if (!signedImageUri) {
       return;
     }
 
+    const saveWithStorageAccessFramework = async (directoryUri: string): Promise<void> => {
+      const base64Data = await FileSystem.readAsStringAsync(signedImageUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const filename = `threatlens_protected_${Date.now()}.jpg`;
+      const destinationUri = await FileSystem.StorageAccessFramework.createFileAsync(
+        directoryUri,
+        filename,
+        "image/jpeg"
+      );
+
+      await FileSystem.writeAsStringAsync(destinationUri, base64Data, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+    };
+
     try {
+      if (Platform.OS === "android") {
+        let directoryUri = await getProtectedDirectoryUri();
+        if (!directoryUri) {
+          Alert.alert(
+            "Folder Required",
+            "Choose a folder (recommended: ThreatLens Protected) to save signed images."
+          );
+          return;
+        }
+
+        try {
+          await saveWithStorageAccessFramework(directoryUri);
+        } catch {
+          // Directory permissions can expire after reinstall. Ask user to pick folder again once.
+          directoryUri = await requestProtectedDirectoryUri();
+          if (!directoryUri) {
+            Alert.alert(
+              "Folder Required",
+              "Choose a folder to save signed images."
+            );
+            return;
+          }
+
+          await saveWithStorageAccessFramework(directoryUri);
+        }
+
+        Alert.alert("Saved", "Signed image saved to your selected protected folder.");
+        return;
+      }
+
       const { status } = await MediaLibrary.requestPermissionsAsync(false, ["photo"]);
       if (status === "granted") {
-        await MediaLibrary.saveToLibraryAsync(signedImageUri);
-        Alert.alert("Saved", "Signed image saved to your gallery.");
+        const asset = await MediaLibrary.createAssetAsync(signedImageUri);
+        const existingAlbums = await MediaLibrary.getAlbumsAsync();
+        const targetAlbum = existingAlbums.find((album) => album.title === PROTECTED_ALBUM_NAME);
+
+        if (targetAlbum) {
+          await MediaLibrary.addAssetsToAlbumAsync([asset], targetAlbum, false);
+        } else {
+          await MediaLibrary.createAlbumAsync(PROTECTED_ALBUM_NAME, asset, false);
+        }
+
+        Alert.alert("Saved", `Signed image saved to '${PROTECTED_ALBUM_NAME}' album.`);
       } else {
         Alert.alert("Permission Required", "Allow gallery permission to save image.");
       }
@@ -539,6 +674,33 @@ export default function ShieldScreen() {
                   )}
                 </Pressable>
 
+                {Platform.OS === "android" ? (
+                  <View style={styles.folderManagementCard}>
+                    <Text style={styles.resultTitle}>Protected Export Folder</Text>
+                    <Text style={styles.resultLine}>{protectedFolderDisplay}</Text>
+                    <View style={styles.settingsActionsRow}>
+                      <Pressable
+                        style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressedButton]}
+                        onPress={() => {
+                          void changeProtectedFolder();
+                        }}
+                      >
+                        <Feather name="folder-plus" size={16} color={THEME.colors.textPrimary} />
+                        <Text style={styles.secondaryButtonText}>Change Folder</Text>
+                      </Pressable>
+                      <Pressable
+                        style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressedButton]}
+                        onPress={() => {
+                          void resetProtectedFolder();
+                        }}
+                      >
+                        <Feather name="rotate-ccw" size={16} color={THEME.colors.textPrimary} />
+                        <Text style={styles.secondaryButtonText}>Reset</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : null}
+
                 {deviceSnapshot ? (
                   <View style={styles.snapshotCard}>
                     <Text style={styles.resultTitle}>Device Trust State</Text>
@@ -695,6 +857,20 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.colors.surfaceMuted,
     padding: 12,
     gap: 6,
+  },
+  folderManagementCard: {
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: THEME.colors.borderStrong,
+    borderRadius: THEME.radius.md,
+    backgroundColor: THEME.colors.surfaceMuted,
+    padding: 12,
+    gap: 8,
+  },
+  settingsActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
   },
   statusHeader: {
     flexDirection: "row",

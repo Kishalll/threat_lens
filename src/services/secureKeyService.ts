@@ -86,7 +86,7 @@ export async function getMasterPublicKeyPem(): Promise<string | null> {
   try {
     const stored = await SecureStore.getItemAsync(MASTER_PUBLIC_KEY_PEM_KEY_NAME);
     if (typeof stored === "string" && stored.trim().length > 0) {
-      return stored.trim();
+      return stored.trim().replace(/\\n/g, "\n");
     }
   } catch {
     // Ignore SecureStore errors
