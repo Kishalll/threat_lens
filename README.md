@@ -4,7 +4,7 @@ ThreatLens is an Expo React Native app for personal digital safety.
 
 This README is for a first-time contributor who just cloned the repo and wants to run the app using either:
 
-1. Expo Go on a physical phone
+1. On a physical phone via usb
 2. Android Studio emulator on desktop (Windows or macOS)
 
 ## What You Need
@@ -40,10 +40,14 @@ npx expo start -c
 
 ## 3. Run On Phone With development build
 
-Use this for fastest testing loop.
+1. Connect ur phone via USB
+2. run 
+```bash
+adb devices
+```
+ to check if ur phone is connected
 
-1. Install Expo Go on your phone.
-2. Start the project:
+3. Start the project:
 
 ```bash
 npx expo run:android
