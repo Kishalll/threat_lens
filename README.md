@@ -30,7 +30,6 @@ Create a file named `.env` in project root.
 ```dotenv
 EXPO_PUBLIC_GEMINI_API_KEY=your_gemini_api_key
 EXPO_PUBLIC_CLOUD_FUNCTION_URL=https://us-central1-threatlens-492816.cloudfunctions.net/protect-image
-EXPO_PUBLIC_CLOUD_FUNCTION_API_KEY=key_of_your_cloud_function
 ```
 
 If you change `.env`, restart Metro with cache clear:
@@ -39,87 +38,24 @@ If you change `.env`, restart Metro with cache clear:
 npx expo start -c
 ```
 
-## 3. Run On Phone With Expo Go
+## 3. Run On Phone With development build
 
 Use this for fastest testing loop.
 
 1. Install Expo Go on your phone.
-2. Connect laptop and phone to the same Wi-Fi network.
-3. Start the project:
+2. Start the project:
 
 ```bash
-npx expo start
-```
-
-4. Scan the QR code from Expo Go.
-
-If the phone cannot connect, run tunnel mode:
-
-```bash
-npx expo start --tunnel
-```
-
-Note: Expo Go does not include custom native modules from this app, so native notification interception features are limited in Expo Go.
-
-## 4. Run On Android Studio Emulator (Windows)
-
-### 4.1 Install Android SDK Components
-
-In Android Studio, open SDK Manager and install:
-
-1. Android SDK Platform (API 34 or newer)
-2. Android SDK Build-Tools
-3. Android SDK Platform-Tools
-4. Android SDK Command-line Tools (latest)
-5. Android Emulator
-
-### 4.2 Set Environment Variables (Permanent)
-
-Set User variables:
-
-1. `JAVA_HOME` = `C:\Users\<your-user>\.jdk\jdk-17.x.x`
-2. `ANDROID_HOME` = `C:\Users\<your-user>\AppData\Local\Android\Sdk`
-3. `ANDROID_SDK_ROOT` = `C:\Users\<your-user>\AppData\Local\Android\Sdk`
-
-Add to User `Path`:
-
-1. `%JAVA_HOME%\bin`
-2. `%ANDROID_HOME%\platform-tools`
-3. `%ANDROID_HOME%\emulator`
-4. `%ANDROID_HOME%\cmdline-tools\latest\bin`
-
-Open a new terminal and verify:
-
-```powershell
-java -version
-adb version
-emulator -list-avds
-```
-
-### 4.3 Create Emulator And Run
-
-1. Android Studio > Device Manager > Create device > Start it.
-2. From project root:
-
-```powershell
 npx expo run:android
 ```
 
-3. In a second terminal:
+## 4. Run On Android Studio Emulator (macOS)
 
-```powershell
-npx expo start --dev-client
-```
-
-4. Press `a` to open on the running emulator.
-
-## 5. Run On Android Studio Emulator (macOS)
-
-### 5.1 Install Android SDK Components
+### 4.1 Install Android SDK Components
 
 In Android Studio, install the same components listed in the Windows section.
 
-### 5.2 Set Environment Variables (zsh)
+### 4.2 Set Environment Variables (zsh)
 
 Add this to `~/.zshrc`:
 
@@ -139,7 +75,7 @@ adb version
 emulator -list-avds
 ```
 
-### 5.3 Create Emulator And Run
+### 4.3 Create Emulator And Run
 
 1. Android Studio > Device Manager > Create device > Start it.
 2. From project root:
@@ -156,7 +92,7 @@ npx expo start --dev-client
 
 4. Press `a` to open on the running emulator.
 
-## 6. Common Issues
+## 5. Common Issues
 
 ### `adb` not recognized
 
@@ -174,7 +110,7 @@ Start emulator first, then run `adb devices` and retry `npx expo run:android`.
 
 Already configured in `app.json` with `scheme: threatlens`.
 
-## 7. Security Notes
+## 6. Security Notes
 
 1. Never commit `.env`.
 2. If any API key is exposed, rotate it immediately.
