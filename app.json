@@ -51,6 +51,12 @@
       "expo-sqlite",
       "./withThreatLensConfig.js",
       "expo-background-task"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "473ad7d0-05be-4255-a0c3-e4372e633465"
+      }
+    }
   }
 }
