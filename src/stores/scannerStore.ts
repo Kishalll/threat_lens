@@ -15,8 +15,8 @@ function appendScanToHistory(history: ScanResult[], result: ScanResult): ScanRes
   return dedupeScanResults([result, ...history]);
 }
 
-function syncHistoryToDashboard(history: ScanResult[]): void {
-  useDashboardStore.getState().hydrateScanHistory(history);
+function syncHistoryToDashboard(history: ScanResult[]): Promise<void> {
+  return useDashboardStore.getState().hydrateScanHistory(history);
 }
 
 function recordScanInDashboard(result: ScanResult): void {
@@ -55,7 +55,7 @@ export const useScannerStore = create<ScannerState>()((set, get) => ({
   hydrateFromStorage: async () => {
     const history = await scanRepository.loadHistory();
     set({ history });
-    syncHistoryToDashboard(history);
+    await syncHistoryToDashboard(history);
   },
 
   scanManualText: async (text: string) => {

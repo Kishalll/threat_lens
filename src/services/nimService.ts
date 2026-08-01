@@ -11,6 +11,7 @@ import type { BreachGuidance, ScanResult } from "../types";
 
 // Scanner: needs strong multilingual + Indian-context classification accuracy
 const SCANNER_MODELS = [
+  "meta/llama-3.1-8b-instruct",
   "meta/llama-3.3-70b-instruct",            // primary — best multilingual instruction following
   "nv-mistralai/mistral-nemo-12b-instruct", // fallback
 ];
@@ -169,6 +170,8 @@ async function getNIMClient(): Promise<OpenAI> {
     baseURL: "https://integrate.api.nvidia.com/v1",
     apiKey,
     dangerouslyAllowBrowser: true,
+    timeout: 15000, 
+    maxRetries: 0,
   });
 }
 
@@ -199,8 +202,23 @@ function isCompromisedOrInvalidKeyError(error: unknown): boolean {
     m.includes("401") || m.includes("403");
 }
 
+function isTimeoutError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  const message = error.message.toLowerCase();
+
+  return (
+    message.includes("timeout") ||
+    message.includes("timed out")
+  );
+}
+
 function canTryNextModel(error: unknown): boolean {
-  return isModelUnavailableError(error) || isQuotaOrRateLimitError(error);
+  return (
+    isModelUnavailableError(error) ||
+    isQuotaOrRateLimitError(error) ||
+    isTimeoutError(error)
+  );
 }
 
 function extractRetryAfterMs(message: string): number {
@@ -280,7 +298,7 @@ async function generateWithNIM(
           const isUnsupported = guidedError instanceof Error &&
             (guidedError.message.includes("400") || guidedError.message.toLowerCase().includes("unsupported"));
           if (!isUnsupported) throw guidedError;
-          console.warn(`guided_json not supported by ${model}, retrying without it`);
+          console.warn(`[NIM] guided_json not supported by ${model}, retrying without it`);
         }
       }
 

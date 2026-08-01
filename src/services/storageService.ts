@@ -35,6 +35,11 @@ const DATABASE_SCHEMA_SQL = `
     explanation TEXT NOT NULL DEFAULT ''
   );
 
+  CREATE TABLE IF NOT EXISTS acted_suggestions (
+    suggestion_id TEXT PRIMARY KEY,
+    acted_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS breach_cache (
     id TEXT PRIMARY KEY,
     payload TEXT NOT NULL,
@@ -283,4 +288,27 @@ export async function getScanResult(id: string): Promise<ScanResult | null> {
   );
   if (!row) return null;
   return toScanResult(row as Record<string, unknown>);
+}
+
+export async function insertActedSuggestion(suggestionId: string): Promise<void> {
+  await withDatabase(async (database) => {
+    await database.runAsync(
+      "INSERT OR REPLACE INTO acted_suggestions (suggestion_id, acted_at) VALUES (?, ?)",
+      [suggestionId, Date.now()]
+    );
+  });
+}
+
+export async function getActedSuggestionIds(): Promise<Set<string>> {
+  const rows = await withDatabase((database) =>
+    database.getAllAsync("SELECT suggestion_id FROM acted_suggestions")
+  );
+  const actedIds = new Set<string>();
+  for (const row of rows) {
+    const suggestionId = (row as { suggestion_id?: unknown }).suggestion_id;
+    if (typeof suggestionId === "string") {
+      actedIds.add(suggestionId);
+    }
+  }
+  return actedIds;
 }

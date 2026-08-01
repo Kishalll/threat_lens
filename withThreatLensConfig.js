@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { withAndroidManifest, withMainApplication, withDangerousMod } = require('@expo/config-plugins');
+const { withAndroidManifest, withMainApplication, withDangerousMod, withAppBuildGradle } = require('@expo/config-plugins');
 
 function withThreatLensManifest(config) {
   return withAndroidManifest(config, async config => {
@@ -90,6 +90,23 @@ function withThreatLensMainApp(config) {
       'PackageList(this).packages.apply {',
       'PackageList(this).packages.apply {\n              add(NotificationPackage())'
     );
+
+    return config;
+  });
+}
+
+function withThreatLensDependencies(config) {
+  return withAppBuildGradle(config, (config) => {
+    const dependency =
+      'implementation "androidx.work:work-runtime-ktx:2.10.1"';
+
+    if (!config.modResults.contents.includes("androidx.work:work-runtime-ktx")) {
+      config.modResults.contents = config.modResults.contents.replace(
+        /dependencies\s*\{/,
+        `dependencies {
+    ${dependency}`
+      );
+    }
 
     return config;
   });
@@ -1091,6 +1108,7 @@ function withThreatLensNativeFiles(config) {
 module.exports = function withThreatLensConfig(config) {
   config = withThreatLensManifest(config);
   config = withThreatLensMainApp(config);
+  config = withThreatLensDependencies(config);
   config = withThreatLensNativeFiles(config);
   return config;
 };

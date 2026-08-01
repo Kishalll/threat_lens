@@ -44,8 +44,15 @@ export default function ScannerScreen() {
 
     setScanError(null);
 
+    console.log("[SCAN] 1. manual scan started", { input });
+
     try {
+        console.log("[SCAN] 2. calling scan service");
+
       const result = await scannerStore.scanManualText(input);
+
+        console.log("[SCAN] 3. scan service returned", result);
+
 
       if (result.classification === "UNAVAILABLE") {
         setLastFailedInput(input);
@@ -56,11 +63,18 @@ export default function ScannerScreen() {
         );
         return;
       }
+        console.log("[SCAN] 4. processing result");
+
 
       setLastFailedInput("");
       setTextToScan("");
       router.push({ pathname: "/scan/result", params: { id: result.id } });
+
+        console.log("[SCAN] 5. scan completed");
+
     } catch (error) {
+        console.error("[SCAN] ERROR", error);
+
       if (error instanceof Error && error.message === "Scan cancelled.") {
         return;
       }

@@ -81,6 +81,10 @@ if ($UseGeneratedConfig -and (Test-Path $GeneratedConfigPath)) {
 if ($InstallDependencies -or -not (Test-Path "./node_modules")) {
   Write-Host "Installing dependencies..." -ForegroundColor Yellow
   npm install
+
+  if ($LASTEXITCODE -ne 0) {
+    throw "npm install failed with exit code $LASTEXITCODE."
+  }
 }
 
 Write-Host "" 

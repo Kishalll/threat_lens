@@ -58,3 +58,11 @@ __pycache__/
 
 #misc
 gcloud-firebase-migration.md
+
+# Local SQLite
+*.db
+*.db-shm
+*.db-wal
+
+# Wrangler
+workers/.wrangler/

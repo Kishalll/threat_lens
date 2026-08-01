@@ -9,6 +9,10 @@ import {
   type SuggestionSource,
   type TrackedSuggestion,
 } from "./dashboardDerived";
+import {
+  getActedSuggestionIds,
+  insertActedSuggestion,
+} from "../services/storageService";
 
 export type { SuggestionSource, TrackedSuggestion } from "./dashboardDerived";
 
@@ -51,7 +55,7 @@ export interface DashboardState {
     options?: { isFallback?: boolean; replaceExisting?: boolean }
   ) => void;
   recordScannedMessage: (message: ScannedMessage) => void;
-  hydrateScanHistory: (scanResults: ScanResult[]) => void;
+  hydrateScanHistory: (scanResults: ScanResult[]) => Promise<void>;
   markSuggestionAsDone: (id: string) => void;
   getSuggestionsForSource: (
     source: SuggestionSource,
@@ -218,12 +222,27 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     });
   },
 
-  hydrateScanHistory: (scanResults) => {
+  hydrateScanHistory: async (scanResults) => {
+    let actedIds: Set<string>;
+    try {
+      actedIds = await getActedSuggestionIds();
+    } catch (error) {
+      console.warn(
+        "[dashboardStore] Failed to load acted suggestions; continuing with empty set",
+        error
+      );
+      actedIds = new Set();
+    }
+
     set((state) => {
       const scanDerived = buildScanDashboardState(scanResults);
+      const scanSuggestions = scanDerived.suggestions.map((suggestion) => ({
+        ...suggestion,
+        acted: suggestion.acted || actedIds.has(suggestion.id),
+      }));
       const suggestions = [
         ...state.suggestions.filter((suggestion) => suggestion.source !== "scan"),
-        ...scanDerived.suggestions,
+        ...scanSuggestions,
       ];
       const scannedMessages = getScannedMessagesFromSuggestions({
         ...state,
@@ -239,9 +258,12 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   },
 
   markSuggestionAsDone: (id) => {
+    const current = get().suggestions.find((suggestion) => suggestion.id === id);
+    const shouldPersist = !!current && !current.acted && !current.isFallback;
+
     set((state) => {
-      const current = state.suggestions.find((suggestion) => suggestion.id === id);
-      if (!current || current.acted || current.isFallback) {
+      const currentInState = state.suggestions.find((suggestion) => suggestion.id === id);
+      if (!currentInState || currentInState.acted || currentInState.isFallback) {
         return state;
       }
 
@@ -258,6 +280,15 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         scannedMessages,
       });
     });
+
+    if (shouldPersist) {
+      insertActedSuggestion(id).catch((error) => {
+        console.warn(
+          "[dashboardStore] Failed to persist acted suggestion",
+          error
+        );
+      });
+    }
   },
 
   getSuggestionsForSource: (source, sourceId) => {
